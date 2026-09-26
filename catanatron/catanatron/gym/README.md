@@ -3,8 +3,10 @@
 For reinforcement learning purposes, we provide an Open AI Gym / Gymnasium environment. To use:
 
 ```
-pip install catanatron[gym]
+uv add catanatron[gym]
 ```
+
+(or `pip install catanatron[gym]`)
 
 Make your training loop, ensuring to respect `env.get_valid_actions()`.
 

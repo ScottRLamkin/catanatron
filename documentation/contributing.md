@@ -11,25 +11,19 @@ Any and all contributions are more than welcome!
 To develop for Catanatron, install the development dependencies and use the following test suite:
 
 ```bash
-pip install ".[web,gym,dev]"
-coverage run --source=catanatron -m pytest tests/ && coverage report
-```
-
-Or you can run the suite in watch-mode with:
-
-```bash
-ptw --ignore=tests/integration_tests/ --nobeep
+uv sync --extra web --extra gym --group dev
+uv run coverage run --source=catanatron -m pytest tests/ && uv run coverage report
 ```
 
 ## Architecture
 
 The code is divided in three main components (folders):
 
-* **catanatron**: The pure python implementation of the game logic. Uses `networkx` for fast graph operations. It is pip-installable (see [pyproject.toml](../pyproject.toml)) and can be used as a Python package. The implementation of this follows the idea of Game Trees (see [https://en.wikipedia.org/wiki/Game\_tree](https://en.wikipedia.org/wiki/Game_tree)) so that it lends itself for Tree-Searching Bots and Reinforcement Learning Environment Loops. Every "ply" is advanced with the `.play_tick` function. See more on Code Documentation site: [https://catanatron.readthedocs.io/](https://catanatron.readthedocs.io/)
-  * **catanatron.web**: An extension package (optionally installed) that contains a Flask web server in order to serve game states from a database to a Web UI. The idea of using a database, is to ease watching games played in a different process. It defaults to using an ephemeral in-memory sqlite database. Also pip-installable with `pip install catanatron[web]`.
-  * **catanatron.gym**: Gymnasium interface to Catan. Includes a configurable 1v1 environment and a vector-friendly representations of states and actions. This can be pip-installed independently with `pip install catanatron[gym]`, for more information see [catanatron/gym/README.md](../catanatron/catanatron/gym/).
+* **catanatron**: The pure python implementation of the game logic. Uses `networkx` for fast graph operations. It is installable with uv/pip (see [pyproject.toml](../pyproject.toml)) and can be used as a Python package. The implementation of this follows the idea of Game Trees (see [https://en.wikipedia.org/wiki/Game\_tree](https://en.wikipedia.org/wiki/Game_tree)) so that it lends itself for Tree-Searching Bots and Reinforcement Learning Environment Loops. Every "ply" is advanced with the `.play_tick` function. See more on Code Documentation site: [https://catanatron.readthedocs.io/](https://catanatron.readthedocs.io/)
+  * **catanatron.web**: An extension package (optionally installed) that contains a Flask web server in order to serve game states from a database to a Web UI. The idea of using a database, is to ease watching games played in a different process. It defaults to using an ephemeral in-memory sqlite database. Also installable with `uv add catanatron[web]` (or `pip install catanatron[web]`).
+  * **catanatron.gym**: Gymnasium interface to Catan. Includes a configurable 1v1 environment and a vector-friendly representations of states and actions. This can be installed independently with `uv add catanatron[gym]` (or `pip install catanatron[gym]`), for more information see [catanatron/gym/README.md](../catanatron/catanatron/gym/).
   * **catanatron.cli**: A rich-powered CLI that enables the `catanatron-play` console script. Can be used to play games in bulk, create machine learning datasets of games, and more!
-* **catantron\_experimental**: A collection of unorganized scripts with contain many failed attempts at finding the best possible bot. Its ok to break these scripts. Its pip-installable. 
+* **catantron\_experimental**: A collection of unorganized scripts with contain many failed attempts at finding the best possible bot. Its ok to break these scripts. Its installable via uv/pip. 
 * **ui**: A React web UI to render games. This is helpful for debugging the core implementation. We decided to use the browser as a randering engine (as opposed to the terminal or a desktop GUI) because of HTML/CSS's ubiquitousness and the ability to use modern animation libraries in the future ([https://www.framer.com/motion/](https://www.framer.com/motion/) or [https://www.react-spring.io/](https://www.react-spring.io/)).
 
 ## Running Components Individually
@@ -57,8 +51,8 @@ Ensure you are inside a virtual environment with all dependencies installed and
 &#x20;use `flask run`. This will use SQLite by default.
 
 ```bash
-pip install -e .[web]
-FLASK_DEBUG=1 FLASK_APP=catanatron.web/catanatron.web flask run
+uv sync --extra web
+FLASK_DEBUG=1 FLASK_APP=catanatron.web/catanatron.web uv run flask run
 ```
 
 This can also be run via Docker independently (after building):
@@ -99,7 +93,7 @@ snakeviz profile.pstats
 ```
 
 ```bash
-pytest --benchmark-compare=0001 --benchmark-compare-fail=mean:10% --benchmark-columns=min,max,mean,stddev
+uv run pytest --benchmark-compare=0001 --benchmark-compare-fail=mean:10% --benchmark-columns=min,max,mean,stddev
 ```
 
 #### Head Large Datasets with Pandas
@@ -113,7 +107,7 @@ x.get_chunk(10)
 Building Sphinx Code Documentation Site
 
 ```bash
-pip install -r docs/requirements.txt
+uv pip install -r docs/requirements.txt
 sphinx-quickstart docs
 sphinx-apidoc -o docs/source catanatron
 sphinx-build -b html docs/source/ docs/build/html

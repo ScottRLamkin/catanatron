@@ -26,21 +26,17 @@ Catanatron provides a `catanatron-play` CLI tool to run large scale simulations.
     git clone git@github.com:bcollazo/catanatron.git
     cd catanatron/
     ```
-2. Create a virtual environment (requires Python 3.11 or higher) 
+2. Install [uv](https://docs.astral.sh/uv/) (requires Python 3.11 or higher). uv manages the virtual environment for you.
 
-    ```bash
-    python -m venv venv
-    source ./venv/bin/activate
-    ```
 3. Install dependencies
 
     ```bash
-    pip install -e .
+    uv sync
     ```
-4. (Optional) Install developer and advanced dependencies 
+4. (Optional) Install developer and advanced dependencies
 
     ```bash
-    pip install -e ".[web,gym,dev]"
+    uv sync --extra web --extra gym --group dev
     ```
 
 ### Usage
@@ -48,12 +44,12 @@ Catanatron provides a `catanatron-play` CLI tool to run large scale simulations.
 Run simulations and generate datasets via the CLI:
 
 ```bash
-catanatron-play --players=R,R,R,W --num=100
+uv run catanatron-play --players=R,R,R,W --num=100
 ```
 
 Generate datasets from the games to analyze:
 ```bash
-catanatron-play --num 100 --output my-data-path/ --output-format json
+uv run catanatron-play --num 100 --output my-data-path/ --output-format json
 ```
 
 See more examples at https://docs.catanatron.com.
@@ -104,7 +100,12 @@ For Reinforcement Learning, catanatron provides an Open AI / Gymnasium Environme
 
 Install it with:
 ```bash
-pip install -e .[gym]
+uv sync --extra gym
+```
+
+Or, in your own project:
+```bash
+uv add catanatron[gym]
 ```
 
 and use it like:
@@ -137,8 +138,8 @@ Full documentation here: https://docs.catanatron.com
 To develop for Catanatron core logic, install the dev dependencies and use the following test suite:
 
 ```bash
-pip install .[web,gym,dev]
-coverage run --source=catanatron -m pytest tests/ && coverage report
+uv sync --extra web --extra gym --group dev
+uv run coverage run --source=catanatron -m pytest tests/ && uv run coverage report
 ```
 
 See more at: https://docs.catanatron.com

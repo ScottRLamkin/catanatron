@@ -82,7 +82,13 @@ state-mutating function in the ``state_functions`` module.
 A great way to further undersand the internals is to place a breakpoint in ``MyPlayer`` or ``RandomPlayer``
 run the provided sample.py in the repo and inspect the ``game`` and ``playable_actions`` objects.
 
-This package is published in PyPi and is pip-installable like so:
+This package is published in PyPi and is installable like so:
+
+.. code-block::
+
+   uv add catanatron
+
+or, with pip:
 
 .. code-block::
 

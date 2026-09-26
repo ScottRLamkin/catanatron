@@ -19,8 +19,8 @@ You should now be able to visit [http://localhost:3000](http://localhost:3000/) 
 You can also (in a new terminal window) install the `[web]` subpackage and use the `--db` flag to make the catanatron-play simulator save the game in the database for inspection via the web server.
 
 ```bash
-pip install .[web]
-catanatron-play --players=W,W,W,W --db --num=1
+uv sync --extra web
+uv run catanatron-play --players=W,W,W,W --db --num=1
 ```
 
 The link should be printed in the console.

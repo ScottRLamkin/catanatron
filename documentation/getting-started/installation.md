@@ -12,21 +12,17 @@ icon: download
     git clone git@github.com:bcollazo/catanatron.git
     cd catanatron/
     ```
-2.  Create a virtual environment (requires Python 3.11 or higher)&#x20;
+2.  Install [uv](https://docs.astral.sh/uv/) (requires Python 3.11 or higher). uv manages the virtual environment for you.
 
-    ```bash
-    python -m venv venv
-    source ./venv/bin/activate
-    ```
 3.  Install dependencies
 
     ```bash
-    pip install -e .
+    uv sync
     ```
 4.  (Optional) Install developer and advanced dependencies&#x20;
 
     ```bash
-    pip install -e .[web,gym,dev]
+    uv sync --extra web --extra gym --group dev
     ```
 
 ### Graphical User Interface Installation

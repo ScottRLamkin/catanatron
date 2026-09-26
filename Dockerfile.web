@@ -2,12 +2,13 @@
 # docker build -t bcollazo/catanatron-server:latest . -f Dockerfile.web
 FROM python:3.12
 
+# Install uv (see https://docs.astral.sh/uv/getting-started/installation/)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 WORKDIR /app
 
-RUN pip install --upgrade pip
-
 COPY . .
-RUN pip install -e .[web]
+RUN uv sync --extra web
 
 EXPOSE 5001
 
@@ -15,5 +16,6 @@ ENV FLASK_DEBUG=1
 ENV FLASK_APP=catanatron.web/catanatron.web
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV FLASK_RUN_PORT=5001
+ENV PATH="/app/.venv/bin:$PATH"
 
 CMD flask run

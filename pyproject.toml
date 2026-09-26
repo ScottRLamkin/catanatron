@@ -28,15 +28,6 @@ web = [
     "sqlalchemy",
     "psycopg2-binary",
 ]
-dev = [
-    "black",
-    "pytest",
-    "pytest-benchmark",
-    "pytest-watch",
-    "coverage",
-    "coveralls",
-]
-
 [project.urls]
 Homepage = "https://github.com/bcollazo/catanatron"
 Repository = "https://github.com/bcollazo/catanatron"
@@ -46,3 +37,11 @@ catanatron-play = "catanatron.cli.play:simulate"
 
 [tool.setuptools.packages.find]
 where = ["catanatron"]
+
+[dependency-groups]
+dev = [
+    "black",
+    "pytest",
+    "pytest-benchmark",
+    "coverage",
+]

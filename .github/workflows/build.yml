@@ -30,51 +30,45 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "pip" # caching pip dependencies
       - name: Install core
-        run: | # TODO: Move to python -m build and an automated release(?)
-          pip install .
+        run: |
+          uv sync
       - name: Run sample catanatron-play
         run: |
-          catanatron-play --players=R,W,F,AB:2 --num=2
+          uv run catanatron-play --players=R,W,F,AB:2 --num=2
       - name: Test Custom Bot
         run: |
-          catanatron-play --code=examples/custom_player.py --players=F,FOO --num=1
+          uv run catanatron-play --code=examples/custom_player.py --players=F,FOO --num=1
       - name: Test Custom Accumulator
         run: |
-          catanatron-play --code=examples/custom_accumulator.py --players=F,R --num=1
+          uv run catanatron-play --code=examples/custom_accumulator.py --players=F,R --num=1
       - name: Test Library Example
         run: |
-          python -W error examples/library_example.py
+          uv run python -W error examples/library_example.py
       - name: Install Gym
         run: |
-          pip install .[gym]
+          uv sync --extra gym
       - name: Test Gym Inline
         run: |
-          python -c "import gymnasium; import catanatron.gym; env = gymnasium.make('catanatron/Catanatron-v0')"
+          uv run python -c "import gymnasium; import catanatron.gym; env = gymnasium.make('catanatron/Catanatron-v0')"
       - name: Test README.md sample (and fail even on warnings)
         run: |
-          python -W error examples/gym_example.py && \
-          python -W error examples/gym_vectorized_example.py
+          uv run python -W error examples/gym_example.py && \
+          uv run python -W error examples/gym_vectorized_example.py
       - name: Install the rest of the dependencies
         run: |
-          pip install .[web,dev]
+          uv sync --extra web --extra gym --group dev
       - name: Lint with black
         run: |
-          black catanatron --check
-          black catanatron_experimental --check
+          uv run black catanatron --check
+          uv run black catanatron_experimental --check
       - name: Test with pytest
         run: |
-          coverage run --source=catanatron -m pytest tests/
-      - name: Coveralls
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          coveralls --service=github
+          uv run coverage run --source=catanatron -m pytest tests/
 
   build-ui:
     runs-on: ubuntu-latest

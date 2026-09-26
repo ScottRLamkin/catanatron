@@ -4,6 +4,10 @@
 #   `docker run --rm -it bcollazo/paperspace-rl catanatron-play` to ensure it works.
 #   `docker push bcollazo/paperspace-rl` to publish.
 # FROM paperspace/tensorflow:2.0.0-gpu-py3-jupyter-lab
+# NOTE: legacy image pinned to Python 3.8, which uv/this project's uv.lock no longer
+# targets (requires-python >=3.11). Left on pip/python3.8 intentionally; if this image
+# is revived, prefer rebasing it on a >=3.11 base and switching to `uv sync` like the
+# other Dockerfiles in this repo.
 FROM tensorflow/tensorflow:2.10.0rc1-gpu-jupyter
 
 # Install Python3.8

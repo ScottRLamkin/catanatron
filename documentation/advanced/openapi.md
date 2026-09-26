@@ -7,7 +7,7 @@ icon: microchip-ai
 For reinforcement learning purposes, we provide an Open AI Gym / Gymnasium environment. To use, in the root of the catanatron repository:
 
 ```bash
-pip install -e .[gym]
+uv sync --extra gym
 ```
 
 Make your training loop, ensuring to respect `info['valid_actions']` :
