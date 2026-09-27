@@ -31,8 +31,14 @@ DETERMINISTIC_ACTIONS = set(
         ActionType.PLAY_YEAR_OF_PLENTY,
         ActionType.PLAY_ROAD_BUILDING,
         ActionType.MARITIME_TRADE,
-        ActionType.DISCARD,  # for simplicity... ok if reality is slightly different
+        ActionType.DISCARD,  # player picks the card, so truly deterministic
         ActionType.PLAY_MONOPOLY,  # for simplicity... we assume good card-counting and bank is visible...
+        # Domestic trade actions only change prompts / move known cards around.
+        ActionType.OFFER_TRADE,
+        ActionType.ACCEPT_TRADE,
+        ActionType.REJECT_TRADE,
+        ActionType.CONFIRM_TRADE,
+        ActionType.CANCEL_TRADE,
     ]
 )
 
@@ -93,7 +99,11 @@ def execute_spectrum(game: Game, action: Action):
             # Nothing to steal
             return execute_deterministic(game, action)
 
-        for card in RESOURCES:
+        # Steal is uniform over the victim's cards, so weight each resource by
+        # how many of it the victim holds.
+        for card, amount in zip(RESOURCES, opponent_hand):
+            if amount == 0:
+                continue
             option_action = Action(
                 action.color,
                 action.action_type,
@@ -101,18 +111,12 @@ def execute_spectrum(game: Game, action: Action):
             )
             option_action_record = ActionRecord(action=option_action, result=card)
             option_game = game.copy()
-            try:
-                option_game.execute(
-                    option_action,
-                    validate_action=False,
-                    action_record=option_action_record,
-                )
-            except Exception:
-                # ignore exceptions, since player might imagine impossible outcomes.
-                # ignoring means the value function of this node will be flattened,
-                # to the one before.
-                pass
-            results.append((option_game, 1 / 5.0))
+            option_game.execute(
+                option_action,
+                validate_action=False,
+                action_record=option_action_record,
+            )
+            results.append((option_game, amount / opponent_hand_size))
         return results
     else:
         raise RuntimeError("Unknown ActionType " + str(action.action_type))
@@ -127,10 +131,17 @@ def expand_spectrum(game, actions):
     return children  # action => (game, proba)[]
 
 
+def prune_trade_offers(actions):
+    """Policy (not a rule): drop OFFER_TRADE actions. Shallow searches can't
+    see a trade's payoff (the cards only move after the opponent answers and
+    the offerer confirms), so offering only widens the tree."""
+    return [a for a in actions if a.action_type != ActionType.OFFER_TRADE]
+
+
 def list_prunned_actions(game: Game):
     current_color = game.state.current_color()
     playable_actions = game.playable_actions
-    actions = playable_actions.copy()
+    actions = prune_trade_offers(playable_actions)
     types = set(map(lambda a: a.action_type, playable_actions))
 
     # Prune Initial Settlements at 1-tile places
@@ -163,32 +174,37 @@ def list_prunned_actions(game: Game):
 
 
 def prune_robber_actions(current_color, game, actions):
-    """Eliminate all but the most impactful tile"""
-    enemy_color = next(filter(lambda c: c != current_color, game.state.colors))
+    """Eliminate all but the most impactful tile (most enemy production
+    blocked, summed over all enemies, minus our own blocked production)."""
+    enemy_colors = list(get_enemy_colors(game.state.colors, current_color))
     enemy_owned_tiles = set()
-    for node_id in get_player_buildings(game.state, enemy_color, SETTLEMENT):
-        enemy_owned_tiles.update(game.state.board.map.adjacent_tiles[node_id])
-    for node_id in get_player_buildings(game.state, enemy_color, CITY):
-        enemy_owned_tiles.update(game.state.board.map.adjacent_tiles[node_id])
+    for enemy_color in enemy_colors:
+        for node_id in get_player_buildings(game.state, enemy_color, SETTLEMENT):
+            enemy_owned_tiles.update(game.state.board.map.adjacent_tiles[node_id])
+        for node_id in get_player_buildings(game.state, enemy_color, CITY):
+            enemy_owned_tiles.update(game.state.board.map.adjacent_tiles[node_id])
 
-    robber_moves = set(
-        filter(
-            lambda a: a.action_type == ActionType.MOVE_ROBBER
-            and game.state.board.map.tiles[a.value[0]] in enemy_owned_tiles,
-            actions,
-        )
-    )
+    robber_moves = [
+        a
+        for a in actions
+        if a.action_type == ActionType.MOVE_ROBBER
+        and game.state.board.map.tiles[a.value[0]] in enemy_owned_tiles
+    ]
+    if len(robber_moves) == 0:
+        return actions  # nothing to prune against (e.g. enemies own no tiles)
 
     production_features = build_production_features(True)
+    enemy_names = [f"P{i}" for i in range(1, len(game.state.colors))]
 
     def impact(action):
         game_copy = game.copy()
-        game_copy.execute(action)
+        game_copy.execute(action, validate_action=False)
 
-        our_production_sample = production_features(game_copy, current_color)
-        enemy_production_sample = production_features(game_copy, current_color)
-        production = value_production(our_production_sample, "P0")
-        enemy_production = value_production(enemy_production_sample, "P1")
+        # production_features is from current_color's perspective: P0 is us,
+        # P1..Pn are the enemies.
+        sample = production_features(game_copy, current_color)
+        production = value_production(sample, "P0")
+        enemy_production = sum(value_production(sample, name) for name in enemy_names)
 
         return enemy_production - production
 

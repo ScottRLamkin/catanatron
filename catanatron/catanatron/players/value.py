@@ -86,7 +86,9 @@ def base_fn(params=DEFAULT_WEIGHTS):
         hand_synergy = (2 - distance_to_city - distance_to_settlement) / 2
 
         num_in_hand = player_num_resource_cards(game.state, p0_color)
-        discard_penalty = params["discard_penalty"] if num_in_hand > 7 else 0
+        discard_penalty = (
+            params["discard_penalty"] if num_in_hand > game.state.discard_limit else 0
+        )
 
         # blockability
         buildings = game.state.buildings_by_color[p0_color]

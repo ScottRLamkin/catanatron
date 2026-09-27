@@ -6,7 +6,11 @@ import random
 from catanatron.game import Game
 from catanatron.models.player import Player
 from catanatron.players.playouts import run_playout
-from catanatron.players.tree_search_utils import execute_spectrum, list_prunned_actions
+from catanatron.players.tree_search_utils import (
+    execute_spectrum,
+    list_prunned_actions,
+    prune_trade_offers,
+)
 
 SIMULATIONS = 10
 epsilon = 1e-8
@@ -20,7 +24,7 @@ class MCTSPlayer(Player):
         self.prunning = bool(prunning)
 
     def decide(self, game: Game, playable_actions):
-        actions = list_prunned_actions(game) if self.prunning else playable_actions
+        actions = mcts_actions(game, self.prunning)
         if len(actions) == 1:
             return actions[0]
 
@@ -36,6 +40,14 @@ class MCTSPlayer(Player):
 
     def __repr__(self):
         return super().__repr__() + f"({self.num_simulations}:{self.prunning})"
+
+
+def mcts_actions(game: Game, prunning: bool):
+    """Actions considered by the search. Policy (not a rule): never initiate
+    domestic trades, since OFFER_TRADE only widens the tree."""
+    if prunning:
+        return list_prunned_actions(game)
+    return prune_trade_offers(game.playable_actions) or game.playable_actions
 
 
 class StateNode:
@@ -81,8 +93,7 @@ class StateNode:
 
     def expand(self):
         children = defaultdict(list)
-        playable_actions = self.game.playable_actions
-        actions = list_prunned_actions(self.game) if self.prunning else playable_actions
+        actions = mcts_actions(self.game, self.prunning)
         for action in actions:
             outcomes = execute_spectrum(self.game, action)
             for state, proba in outcomes:
@@ -102,13 +113,14 @@ class StateNode:
         return random.choices(children_states, weights=children_probas, k=1)[0]
 
     def choose_best_action(self):
+        actions = mcts_actions(self.game, self.prunning)
         scores = []
-        for action in self.game.playable_actions:
+        for action in actions:
             score = self.action_children_expected_score(action)
             scores.append(score)
 
         idx = max(range(len(scores)), key=lambda i: scores[i])
-        action = self.game.playable_actions[idx]
+        action = actions[idx]
         return action
 
     def action_children_expected_score(self, action):
