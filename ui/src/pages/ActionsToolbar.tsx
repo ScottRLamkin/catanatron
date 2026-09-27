@@ -25,9 +25,10 @@ import Hidden from "../components/Hidden";
 import Prompt from "../components/Prompt";
 import ResourceCards from "../components/ResourceCards";
 import ResourceSelector from "../components/ResourceSelector";
+import DiscardSelector from "../components/DiscardSelector";
 import { store } from "../store";
 import ACTIONS from "../actions";
-import type { GameAction, ResourceCard } from "../utils/api.types"; // Add GameState to the import, adjust path if needed
+import type { FreqDeck, GameAction, ResourceCard } from "../utils/api.types"; // Add GameState to the import, adjust path if needed
 import { getHumanColor, playerKey } from "../utils/stateUtils";
 import { postAction } from "../utils/apiClient";
 import { humanizeTradeAction, humanizeOfferTradeAction } from "../utils/promptUtils";
@@ -239,8 +240,12 @@ function PlayButtons() {
     }));
   }, [offerTradeActions, carryOutAction]);
 
-  const discardActions = gameState.current_playable_actions.filter(
-    (action) => action[1] === "DISCARD"
+  const discardOwed = gameState.player_state[`${key}_DISCARD_OWED`] || 0;
+  const submitDiscard = useCallback(
+    (value: FreqDeck) => {
+      carryOutAction([humanColor, "DISCARD", value])();
+    },
+    [carryOutAction, humanColor]
   );
   const acceptTradeAction = gameState.current_playable_actions.find(
     (action) => action[1] === "ACCEPT_TRADE"
@@ -311,18 +316,13 @@ function PlayButtons() {
 
   if (isDiscard) {
     return (
-      <>
-        {discardActions.map((action) => (
-          <Button
-            key={action[2] as string}
-            variant="contained"
-            color="primary"
-            onClick={carryOutAction(action)}
-          >
-            DISCARD {action[2] as string}
-          </Button>
-        ))}
-      </>
+      <DiscardSelector
+        open
+        owed={discardOwed}
+        playerState={gameState.player_state}
+        playerKey={key}
+        onDiscard={submitDiscard}
+      />
     );
   }
 

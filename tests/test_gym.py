@@ -238,6 +238,9 @@ def test_robber_victim_choice_reaches_chosen_victim():
 
 
 def test_discard_via_env_chooses_resource():
+    from catanatron.models.discard_rule import DISCARD_ORDERS, keep_rule
+    from catanatron.state_functions import get_player_freqdeck, player_key
+
     env = CatanatronEnv(
         config={
             "enemies": [
@@ -258,18 +261,85 @@ def test_discard_via_env_chooses_resource():
         ]
         if discard_actions:
             found_discard = True
+            # All 24 keep-rule order slots are always the valid set, exactly.
+            assert sorted(ACTIONS_ARRAY[a][1] for a in discard_actions) == list(
+                range(24)
+            )
+
+            state = env.game.state
+            hand = get_player_freqdeck(state, env.p0.color)
+            owed = state.player_state[
+                f"{player_key(state, env.p0.color)}_DISCARD_OWED"
+            ]
+
             action = discard_actions[0]
             order_index = ACTIONS_ARRAY[action][1]
             assert order_index in range(24)
+            expected = keep_rule(hand, owed, DISCARD_ORDERS[order_index])
+
             before = env.invalid_actions_count
             obs, reward, terminated, truncated, info = env.step(action)
             assert env.invalid_actions_count == before  # decoded to a legal set
+            assert expected is not None  # (computed against pre-step hand)
             break
         action = random.choice(info["valid_actions"])
         obs, reward, terminated, truncated, info = env.step(action)
         if terminated or truncated:
             obs, info = env.reset(seed=_)
     assert found_discard
+
+
+def test_discard_to_order_index_no_lossy_fallback():
+    """A discard set no keep-rule order produces (e.g. a RandomPlayer's) must
+    not be silently approximated: to_action_space/normalize_action must
+    signal `None` rather than guess the closest keep-rule order."""
+    from catanatron.gym.envs.catanatron_env import (
+        discard_to_order_index,
+        normalize_action,
+        to_action_space,
+    )
+    from catanatron.models.discard_rule import DISCARD_ORDERS, keep_rule
+    from catanatron.models.enums import Action
+
+    env = CatanatronEnv(config={"enemies": [RandomPlayer(Color.RED)]})
+    obs, info = env.reset(seed=3)
+    state = env.game.state
+    color = Color.RED
+    key = f"{color.value}"
+
+    hand = (5, 3, 2, 4, 1)  # 15 cards, arbitrary
+    owed = 4
+    for i, resource in enumerate(["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"]):
+        state.player_state[f"P1_{resource}_IN_HAND"] = hand[i]
+    state.player_state["P1_DISCARD_OWED"] = owed
+    # sanity: RED is seat index 1 in this 2-player env (P0=BLUE, P1=RED)
+    assert state.colors[1] == Color.RED
+
+    keep_sets = {keep_rule(hand, owed, order) for order in DISCARD_ORDERS}
+    for i, order in enumerate(DISCARD_ORDERS):
+        discard = keep_rule(hand, owed, order)
+        action = Action(color, ActionType.DISCARD, discard)
+        assert discard_to_order_index(state, action) is not None
+
+    # A discard set no order produces: not among the (<=24) keep-rule sets.
+    all_sets = set()
+
+    def rec(i, remaining, prefix):
+        if i == 4:
+            if 0 <= remaining <= hand[4]:
+                all_sets.add(prefix + (remaining,))
+            return
+        for n in range(0, min(hand[i], remaining) + 1):
+            rec(i + 1, remaining - n, prefix + (n,))
+
+    rec(0, owed, ())
+    non_keep_rule_sets = all_sets - keep_sets
+    assert non_keep_rule_sets  # this hand/owed has non-keep-rule discards
+    bad = next(iter(non_keep_rule_sets))
+    action = Action(color, ActionType.DISCARD, bad)
+    assert discard_to_order_index(state, action) is None
+    assert normalize_action(action, state.colors, state=state) is None
+    assert to_action_space(action, state.colors, state=state) is None
 
 
 def test_p0_can_accept_and_reject_trades():

@@ -24,8 +24,16 @@ export function humanizeActionRecord(
       const action = actionRecord[1] as [number, number];
       return `${player} ROLLED A ${action[0] + action[1]}`;
     }
-    case "DISCARD":
-      return `${player} DISCARDED ${action[2]}`;
+    case "DISCARD": {
+      const value = action[2] as [number, number, number, number, number] | null;
+      if (value === null) {
+        // Still pending (hidden): this player has submitted a discard set
+        // this 7-roll, but not everyone owing has submitted yet.
+        return `${player} DISCARDED (PENDING)`;
+      }
+      const total = value.reduce((a, b) => a + b, 0);
+      return `${player} DISCARDED ${total} CARD${total === 1 ? "" : "S"}`;
+    }
     case "BUY_DEVELOPMENT_CARD":
       return `${player} BOUGHT DEVELOPMENT CARD`;
     case "BUILD_SETTLEMENT":

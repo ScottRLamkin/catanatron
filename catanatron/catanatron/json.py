@@ -8,7 +8,7 @@ from enum import Enum
 from catanatron.models.map import Water, Port, LandTile
 from catanatron.game import Game
 from catanatron.models.player import Color
-from catanatron.models.enums import Action, ActionType
+from catanatron.models.enums import Action, ActionRecord, ActionType
 from catanatron.state_functions import get_longest_road_length, get_state_index
 from catanatron.state import State
 
@@ -18,6 +18,30 @@ def longest_roads_by_player(state: State):
     for color in state.colors:
         result[color.value] = get_longest_road_length(state, color)
     return result
+
+
+def redacted_action_records(state: State):
+    """`state.action_records`, with the DISCARD value of any still-pending
+    submission hidden (replaced with None). A 7-roll's discards are prompted
+    one owing player at a time but resolved simultaneously: while
+    `state.is_discarding` is True, the trailing run of DISCARD records is
+    this still-open round, and no later decider (nor any JSON/snapshot
+    consumer) should see what an earlier player in the same round chose to
+    discard. Once the round resolves (is_discarding is False), those values
+    are revealed like any other historical action."""
+    records = list(state.action_records)
+    if not state.is_discarding:
+        return records
+    redacted = list(records)
+    for i in range(len(redacted) - 1, -1, -1):
+        action = redacted[i].action
+        if action.action_type != ActionType.DISCARD:
+            break
+        redacted[i] = ActionRecord(
+            action=Action(action.color, action.action_type, None),
+            result=redacted[i].result,
+        )
+    return redacted
 
 
 def action_from_json(data) -> Action:
@@ -51,8 +75,12 @@ def action_from_json(data) -> Action:
         *offer, acceptee = data[2]
         action = Action(color, action_type, (*offer, Color[acceptee]))
     elif action_type == ActionType.DISCARD:
-        # A single resource (string).
-        action = Action(color, action_type, data[2])
+        # A 5-tuple freqdeck (WOOD, BRICK, SHEEP, WHEAT, ORE), or None for a
+        # redacted (still-pending, hidden) submission -- see
+        # redacted_action_records / GameEncoder.
+        action = Action(
+            color, action_type, None if data[2] is None else tuple(data[2])
+        )
     else:
         action = Action(color, action_type, data[2])
     return action
@@ -100,7 +128,9 @@ class GameEncoder(json.JSONEncoder):
                 "adjacent_tiles": obj.state.board.map.adjacent_tiles,
                 "nodes": nodes,
                 "edges": list(edges.values()),
-                "action_records": [self.default(a) for a in obj.state.action_records],
+                "action_records": [
+                    self.default(a) for a in redacted_action_records(obj.state)
+                ],
                 "player_state": obj.state.player_state,
                 "colors": obj.state.colors,
                 "bot_colors": list(

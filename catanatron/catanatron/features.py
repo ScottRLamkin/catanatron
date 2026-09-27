@@ -491,6 +491,13 @@ def game_features(game: Game, p0_color: Color):
         if state.current_color() == p0_color
         else 0,
     }
+    for i, color in iter_players(state.colors, p0_color):
+        key = player_key(state, color)
+        # Public: who has already submitted their (hidden) discard set this
+        # 7-roll. Nothing about *what* they submitted is exposed here.
+        features[f"P{i}_DISCARD_SUBMITTED"] = state.player_state.get(
+            f"{key}_DISCARD_SUBMITTED", False
+        )
     for resource in RESOURCES:
         features[f"BANK_{resource}"] = freqdeck_count(
             state.resource_freqdeck, resource

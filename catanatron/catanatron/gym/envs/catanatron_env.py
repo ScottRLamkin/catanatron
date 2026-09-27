@@ -149,18 +149,16 @@ def _discard_keep_sets(state, color):
 
 def discard_to_order_index(state, action):
     """Action-space value for a DISCARD action: the lowest DISCARD_ORDERS
-    index whose keep-rule set equals action.value. A set no order produces
-    (e.g. a RandomPlayer's) maps to the closest keep-rule set (L1 distance,
-    ties to the lowest index) so that logging never fails; this is lossy."""
+    index whose keep-rule set equals action.value, or None if no order
+    produces that exact set (e.g. a RandomPlayer's discard). Callers that
+    only need this for logging (see accumulators.py) should skip the
+    transition entirely rather than approximate it: an approximation would
+    silently teach a model the wrong action for what actually happened."""
     target = tuple(action.value)
-    best_index, best_distance = 0, None
     for i, discard in _discard_keep_sets(state, action.color):
-        distance = sum(abs(a - b) for a, b in zip(discard, target))
-        if distance == 0:
+        if discard == target:
             return i
-        if best_distance is None or distance < best_distance:
-            best_index, best_distance = i, distance
-    return best_index
+    return None
 
 
 # NOTE: I think I don't need this if we separate action and action_record nicely...
@@ -196,7 +194,10 @@ def normalize_action(action, colors, p0_color=None, state=None):
     elif action_type == ActionType.DISCARD:
         if state is None:
             raise ValueError("normalize_action needs `state` for DISCARD actions")
-        return Action(action.color, action_type, discard_to_order_index(state, action))
+        order_index = discard_to_order_index(state, action)
+        if order_index is None:
+            return None  # not representable (e.g. a non-keep-rule discard)
+        return Action(action.color, action_type, order_index)
     elif action_type in (ActionType.ACCEPT_TRADE, ActionType.REJECT_TRADE):
         # value-less in the action space; resolved via state.current_trade.
         return Action(action.color, action_type, None)
@@ -208,8 +209,13 @@ def normalize_action(action, colors, p0_color=None, state=None):
 
 
 def to_action_space(action, colors, p0_color=None, state=None):
-    """maps action to space_action equivalent integer"""
+    """maps action to space_action equivalent integer, or None if `action`
+    cannot be represented in the action space at all (currently only
+    possible for a DISCARD whose value no keep-rule order produces, e.g.
+    a RandomPlayer's; see normalize_action)."""
     normalized = normalize_action(action, colors, p0_color, state)
+    if normalized is None:
+        return None
     return ACTIONS_ARRAY_INDEX[(normalized.action_type, normalized.value)]
 
 
@@ -337,7 +343,12 @@ class CatanatronEnv(gym.Env):
                 }
             )
         return sorted(
-            {to_action_space(a, colors, self.p0.color, state) for a in playable_actions}
+            {
+                encoded
+                for a in playable_actions
+                if (encoded := to_action_space(a, colors, self.p0.color, state))
+                is not None
+            }
         )
 
     def step(self, action):
@@ -530,9 +541,11 @@ CatanatronEnv.__doc__ += """
      - Float
 
    * - IS_DISCARDING
-     - Whether current player must discard. Discards are resolved one card
-       at a time via the DISCARD action (see P0_DISCARD_OWED for how many
-       cards P0 still owes).
+     - Whether any player still owes a discard this turn (7 was rolled).
+       Each owing player submits one DISCARD action (one of the 24
+       keep-rule sets; see P0_DISCARD_OWED for how many cards P0 owes).
+       Submissions are hidden until every owing player has submitted, at
+       which point all discards apply at once.
      - 1
      - Boolean
    * - IS_MOVING_ROBBER

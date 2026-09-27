@@ -9,10 +9,12 @@ uv add catanatron[gym]
 (or `pip install catanatron[gym]`)
 
 The action space includes rolling, building, buying/playing development cards,
-maritime trade, discarding on a 7 (one resource at a time), moving the robber
-(picking a victim by relative seat), and domestic (player-to-player) trading
-(a fixed enumeration of offers, plus accept/reject/confirm/cancel). Make your
-training loop, ensuring to respect `env.get_valid_actions()`.
+maritime trade, discarding on a 7 (one of 24 build-priority "keep rule"
+orders, each discarding the full set of cards that order doesn't keep; see
+`catanatron.models.discard_rule`), moving the robber (picking a victim by
+relative seat), and domestic (player-to-player) trading (a fixed enumeration
+of offers, plus accept/reject/confirm/cancel). Make your training loop,
+ensuring to respect `env.get_valid_actions()`.
 
 ```python
 import random

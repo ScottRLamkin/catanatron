@@ -31,8 +31,14 @@ export type GameActionRecord =
   | [EndTurnAction, null];
 
 export type RollGameAction = [Color, "ROLL", null];
-// Discarding is done one card at a time: value is the resource discarded.
-export type DiscardGameAction = [Color, "DISCARD", ResourceCard];
+// A discard is one whole set, chosen at once: a 5-tuple freqdeck (WOOD,
+// BRICK, SHEEP, WHEAT, ORE) summing to what the player owed. Submissions
+// during a still-open 7-roll round (state.is_discarding) are hidden from
+// everyone (including the discarder's own action log entry) until every
+// owing player has submitted, at which point the engine reveals the real
+// values retroactively -- so `value` is `null` for a still-pending entry.
+export type FreqDeck = [number, number, number, number, number];
+export type DiscardGameAction = [Color, "DISCARD", FreqDeck | null];
 export type BuyDevelopmentCardAction = [Color, "BUY_DEVELOPMENT_CARD", null];
 export type BuildSettlementAction = [Color, "BUILD_SETTLEMENT", number];
 export type BuildCityAction = [Color, "BUILD_CITY", number];

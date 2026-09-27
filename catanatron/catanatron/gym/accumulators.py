@@ -46,6 +46,18 @@ class ReinforcementLearningAccumulator(GameAccumulator):
             self.data["board_tensors"] = []
 
     def step(self, game_before_action, action):
+        encoded_action = to_action_space(
+            action,
+            game_before_action.state.colors,
+            state=game_before_action.state,
+        )
+        if encoded_action is None:
+            # Not representable in the action space: currently only a
+            # DISCARD whose exact set no keep-rule order produces (e.g. a
+            # RandomPlayer's). Drop the whole transition rather than log an
+            # approximate (wrong) action for what actually happened.
+            return
+
         self.data["color_action_indices"][action.color].append(
             len(self.data["samples"])
         )
@@ -53,11 +65,7 @@ class ReinforcementLearningAccumulator(GameAccumulator):
         self.data["samples"].append(create_sample(game_before_action, action.color))
         self.data["actions"].append(
             [
-                to_action_space(
-                    action,
-                    game_before_action.state.colors,
-                    state=game_before_action.state,
-                ),
+                encoded_action,
                 to_action_type_space(action.action_type),
             ]
         )

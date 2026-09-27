@@ -177,13 +177,28 @@ describe("humanizeAction", () => {
     ).toBe("BOT ROLLED A 7");
   });
 
-  test("DISCARD action", () => {
+  test("DISCARD action (resolved)", () => {
     expect(
       humanizeActionRecord(baseGameState, [
-        ["ORANGE", "DISCARD", "WHEAT"],
+        ["ORANGE", "DISCARD", [1, 0, 2, 1, 0]],
         null,
       ])
-    ).toBe("YOU DISCARDED WHEAT");
+    ).toBe("YOU DISCARDED 4 CARDS");
+  });
+
+  test("DISCARD action (singular card count)", () => {
+    expect(
+      humanizeActionRecord(baseGameState, [
+        ["ORANGE", "DISCARD", [1, 0, 0, 0, 0]],
+        null,
+      ])
+    ).toBe("YOU DISCARDED 1 CARD");
+  });
+
+  test("DISCARD action (still pending, hidden)", () => {
+    expect(
+      humanizeActionRecord(baseGameState, [["ORANGE", "DISCARD", null], null])
+    ).toBe("YOU DISCARDED (PENDING)");
   });
 
   test("BUY_DEVELOPMENT_CARD action", () => {
