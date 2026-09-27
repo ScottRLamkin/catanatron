@@ -89,6 +89,5 @@ def test_empty_payout_if_not_enough_resources():
 
     payout, depleted = yield_resources(board, resource_freqdeck, tile.number)
     assert depleted == [tile.resource]
-    assert (
-        Color.RED not in payout or freqdeck_count(payout[Color.RED], tile.resource) == 0  # type: ignore
-    )
+    # official rule: sole recipient gets whatever is left in the bank (1 of 2)
+    assert freqdeck_count(payout[Color.RED], tile.resource) == 1  # type: ignore

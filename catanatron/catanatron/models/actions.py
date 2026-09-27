@@ -3,8 +3,6 @@ Move-generation functions (these return a list of actions that can be taken
 by current player). Main function is generate_playable_actions.
 """
 
-import operator as op
-from functools import reduce
 from typing import Any, Dict, List, Set, Tuple, Union
 
 from catanatron.models.decks import (
@@ -85,9 +83,10 @@ def generate_playable_actions(state: State) -> List[Action]:
 
             # Trade
             actions.extend(maritime_trade_possibilities(state, color))
+            actions.extend(domestic_trade_possibilities(state, color))
         return actions
     elif action_prompt == ActionPrompt.DISCARD:
-        return discard_possibilities(color)
+        return discard_possibilities(state, color)
     elif action_prompt == ActionPrompt.DECIDE_TRADE:
         actions = [Action(color, ActionType.REJECT_TRADE, state.current_trade)]
 
@@ -212,7 +211,7 @@ def robber_possibilities(state, color) -> List[Action]:
 
         # each tile can yield a (move-but-cant-steal) action or
         #   several (move-and-steal-from-x) actions.
-        to_steal_from = set()  # set of player_indexs
+        to_steal_from = set()  # set of colors
         for node_id in tile.nodes.values():
             building = state.board.buildings.get(node_id, None)
             if building is not None:
@@ -226,7 +225,8 @@ def robber_possibilities(state, color) -> List[Action]:
         if len(to_steal_from) == 0:
             actions.append(Action(color, ActionType.MOVE_ROBBER, (coordinate, None)))
         else:
-            for enemy_color in to_steal_from:
+            # deterministic ordering: by seat index
+            for enemy_color in sorted(to_steal_from, key=state.color_to_index.get):
                 actions.append(
                     Action(color, ActionType.MOVE_ROBBER, (coordinate, enemy_color))
                 )
@@ -245,32 +245,58 @@ def initial_road_possibilities(state, color) -> List[Action]:
     return [Action(color, ActionType.BUILD_ROAD, edge) for edge in buildable_edges]
 
 
-def discard_possibilities(color) -> List[Action]:
-    return [Action(color, ActionType.DISCARD, None)]
-    # TODO: Be robust to high dimensionality of DISCARD
-    # hand = player.resource_deck.to_array()
-    # num_cards = player.resource_deck.num_cards()
-    # num_to_discard = num_cards // 2
-
-    # num_possibilities = ncr(num_cards, num_to_discard)
-    # if num_possibilities > 100:  # if too many, just take first N
-    #     return [Action(player, ActionType.DISCARD, hand[:num_to_discard])]
-
-    # to_discard = itertools.combinations(hand, num_to_discard)
-    # return list(
-    #     map(
-    #         lambda combination: Action(player, ActionType.DISCARD, combination),
-    #         to_discard,
-    #     )
-    # )
+def discard_possibilities(state, color) -> List[Action]:
+    """One DISCARD action per resource type the player holds. The player
+    discards one card at a time until P{i}_DISCARD_OWED reaches 0."""
+    freqdeck = get_player_freqdeck(state, color)
+    return [
+        Action(color, ActionType.DISCARD, resource)
+        for resource, amount in zip(RESOURCES, freqdeck)
+        if amount > 0
+    ]
 
 
-def ncr(n, r):
-    """n choose r. helper for discard_possibilities"""
-    r = min(r, n - r)
-    numer = reduce(op.mul, range(n, n - r, -1), 1)
-    denom = reduce(op.mul, range(1, r + 1), 1)
-    return numer // denom
+# (give, get) amounts for the bounded set of domestic trade offers generated in
+# playable_actions. Any other legal offer is still accepted by Game.execute
+# (see game.is_valid_action), these are just the ones bots get to see.
+DOMESTIC_TRADE_TEMPLATES = ((1, 1), (2, 1), (1, 2))
+
+
+def domestic_trade_possibilities(state, color) -> List[Action]:
+    """OFFER_TRADE actions. Value is a 10-tuple: offered freqdeck (5) followed
+    by asked freqdeck (5), e.g. give 2 WOOD for 1 ORE is
+    (2, 0, 0, 0, 0, 0, 0, 0, 0, 1). Only generated if the offer cap for this
+    turn is not reached, there is at least one opponent, the player holds the
+    offered cards and the identical offer was not already made this turn.
+
+    TODO: counter-offers are out of scope (responders can only accept/reject).
+    """
+    if (
+        len(state.colors) < 2
+        or state.is_resolving_trade
+        or len(state.turn_trade_offers) >= state.max_trade_offers_per_turn
+    ):
+        return []
+
+    hand = get_player_freqdeck(state, color)
+    actions = []
+    for i, give_amount in enumerate(hand):
+        if give_amount == 0:
+            continue
+        for j in range(len(RESOURCES)):
+            if i == j:
+                continue  # cant trade same resource
+            for give, get in DOMESTIC_TRADE_TEMPLATES:
+                if give_amount < give:
+                    continue
+                value = [0] * 10
+                value[i] = give
+                value[5 + j] = get
+                value = tuple(value)
+                if value in state.turn_trade_offers:
+                    continue  # cant repeat identical offer in same turn
+                actions.append(Action(color, ActionType.OFFER_TRADE, value))
+    return actions
 
 
 def maritime_trade_possibilities(state, color) -> List[Action]:

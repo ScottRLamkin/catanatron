@@ -22,6 +22,7 @@ from catanatron.models.decks import (
     freqdeck_add,
     freqdeck_can_draw,
     freqdeck_contains,
+    freqdeck_count,
     freqdeck_draw,
     freqdeck_from_listdeck,
     freqdeck_replenish,
@@ -46,7 +47,6 @@ from catanatron.state_functions import (
     player_deck_draw,
     player_deck_replenish,
     player_freqdeck_subtract,
-    player_deck_to_array,
     player_key,
     player_num_resource_cards,
     player_resource_freqdeck_contains,
@@ -266,14 +266,18 @@ def apply_roll(state: State, action: Action, action_record=None):
     action = Action(action.color, action.action_type, dices)
 
     if number == 7:
-        discarders = [
-            player_num_resource_cards(state, color) > state.discard_limit
-            for color in state.colors
-        ]
-        should_enter_discarding_sequence = any(discarders)
+        # Every player over the discard limit owes floor(hand / 2) cards.
+        for color in state.colors:
+            num_cards = player_num_resource_cards(state, color)
+            owed = num_cards // 2 if num_cards > state.discard_limit else 0
+            state.player_state[f"{player_key(state, color)}_DISCARD_OWED"] = owed
 
-        if should_enter_discarding_sequence:
-            state.current_player_index = discarders.index(True)
+        # NOTE: in the official rules discards are simultaneous; here they are
+        # sequential (seat order, starting from the roller). This is the one
+        # deliberate deviation: the information leak is negligible.
+        first_discarder = next_discarder_index(state, state.current_turn_index)
+        if first_discarder is not None:
+            state.current_player_index = first_discarder
             state.current_prompt = ActionPrompt.DISCARD
             state.is_discarding = True
         else:
@@ -295,27 +299,40 @@ def apply_roll(state: State, action: Action, action_record=None):
     return ActionRecord(action=action, result=dices)
 
 
+def next_discarder_index(state: State, start_index):
+    """Index of first player (in seat order, starting at start_index inclusive)
+    that still owes discards, or None."""
+    num_players = len(state.colors)
+    for offset in range(num_players):
+        index = (start_index + offset) % num_players
+        if state.player_state[f"P{index}_DISCARD_OWED"] > 0:
+            return index
+    return None
+
+
 def apply_discard(state: State, action: Action, action_record=None):
-    hand = player_deck_to_array(state, action.color)
-    num_to_discard = len(hand) // 2
-    if action_record is None:
-        # TODO: Forcefully discard randomly so that decision tree doesnt explode in possibilities.
-        discarded = random.sample(hand, k=num_to_discard)
-    else:
-        discarded = action_record.result  # for replay functionality
-    to_discard = freqdeck_from_listdeck(discarded)
+    """Discards a single resource card (action.value) chosen by the player.
+    Deterministic, so action_record is ignored (kept for signature symmetry)."""
+    resource = action.value
+    key = player_key(state, action.color)
+    if state.player_state[f"{key}_DISCARD_OWED"] <= 0:
+        raise ValueError(f"{action.color} does not owe any discards")
+    if resource not in RESOURCES:
+        raise ValueError(f"DISCARD value must be a single resource, got {resource}")
+    if state.player_state[f"{key}_{resource}_IN_HAND"] < 1:
+        raise ValueError(f"{action.color} does not hold {resource} to discard")
 
-    player_freqdeck_subtract(state, action.color, to_discard)
-    state.resource_freqdeck = freqdeck_add(state.resource_freqdeck, to_discard)
-    action = Action(action.color, action.action_type, discarded)
+    player_deck_draw(state, action.color, resource)
+    freqdeck_replenish(state.resource_freqdeck, 1, resource)
+    state.player_state[f"{key}_DISCARD_OWED"] -= 1
 
-    # Advance turn
-    discarders_left = [
-        player_num_resource_cards(state, color) > 7 for color in state.colors
-    ][state.current_player_index + 1 :]
-    if any(discarders_left):
-        to_skip = discarders_left.index(True)
-        state.current_player_index = state.current_player_index + 1 + to_skip
+    if state.player_state[f"{key}_DISCARD_OWED"] > 0:
+        # same player keeps discarding; prompt stays DISCARD
+        return ActionRecord(action=action, result=None)
+
+    next_index = next_discarder_index(state, state.current_player_index + 1)
+    if next_index is not None:
+        state.current_player_index = next_index
         # state.current_prompt stays the same
     else:
         state.current_player_index = state.current_turn_index
@@ -323,7 +340,7 @@ def apply_discard(state: State, action: Action, action_record=None):
         state.is_discarding = False
         state.is_moving_knight = True
 
-    return ActionRecord(action=action, result=discarded)
+    return ActionRecord(action=action, result=None)
 
 
 def apply_move_robber(state: State, action: Action, action_record=None):
@@ -424,15 +441,37 @@ def apply_maritime_trade(state: State, action: Action):
 
 
 def apply_offer_trade(state: State, action: Action):
+    offering = action.value[:5]
+    if len(state.colors) < 2:
+        raise ValueError("No one to trade with")
+    if len(state.turn_trade_offers) >= state.max_trade_offers_per_turn:
+        raise ValueError("Reached max trade offers for this turn")
+    if tuple(action.value[:10]) in state.turn_trade_offers:
+        raise ValueError("Cannot repeat an identical trade offer in the same turn")
+    if not player_resource_freqdeck_contains(state, action.color, offering):
+        raise ValueError("Cannot offer cards you do not have")
+
+    state.turn_trade_offers = (*state.turn_trade_offers, tuple(action.value[:10]))
     state.is_resolving_trade = True
-    state.current_trade = (*action.value, state.current_turn_index)
+    state.current_trade = (*action.value[:10], state.current_turn_index)
 
     # go in seating order; order won't matter because of "acceptees hook"
-    state.current_player_index = next(
-        i for i, c in enumerate(state.colors) if c != action.color
-    )  # cant ask yourself
+    state.current_player_index = next_trade_responder_index(state, -1)
     state.current_prompt = ActionPrompt.DECIDE_TRADE
     return ActionRecord(action=action, result=None)
+
+
+def next_trade_responder_index(state: State, after_index):
+    """Next seat index (ascending) greater than after_index that is not the
+    offering (current-turn) player, or None if everyone has responded."""
+    return next(
+        (
+            i
+            for i in range(len(state.colors))
+            if i != state.current_turn_index and i > after_index
+        ),
+        None,
+    )
 
 
 def apply_accept_trade(state: State, action: Action):
@@ -442,15 +481,12 @@ def apply_accept_trade(state: State, action: Action):
     new_acceptess[index] = True  # type: ignore
     state.acceptees = tuple(new_acceptess)
 
-    try:
-        # keep going around table w/o asking yourself or players that have answered
-        state.current_player_index = next(
-            i
-            for i, c in enumerate(state.colors)
-            if c != action.color and i > state.current_player_index
-        )
+    # keep going around table w/o asking offerer or players that have answered
+    next_index = next_trade_responder_index(state, state.current_player_index)
+    if next_index is not None:
+        state.current_player_index = next_index
         # .is_resolving_trade, .current_trade, .current_prompt, .acceptees stay the same
-    except StopIteration:
+    else:
         # by this action, there is at least 1 acceptee, so go to DECIDE_ACCEPTEES
         # .is_resolving_trade, .current_trade, .acceptees stay the same
         state.current_player_index = state.current_turn_index
@@ -460,15 +496,12 @@ def apply_accept_trade(state: State, action: Action):
 
 
 def apply_reject_trade(state: State, action: Action):
-    try:
-        # keep going around table w/o asking yourself or players that have answered
-        state.current_player_index = next(
-            i
-            for i, c in enumerate(state.colors)
-            if c != action.color and i > state.current_player_index
-        )
+    # keep going around table w/o asking offerer or players that have answered
+    next_index = next_trade_responder_index(state, state.current_player_index)
+    if next_index is not None:
+        state.current_player_index = next_index
         # .is_resolving_trade, .current_trade, .current_prompt, .acceptees stay the same
-    except StopIteration:
+    else:
         # if no acceptees at this point, go back to PLAY_TURN
         if sum(state.acceptees) == 0:
             reset_trading_state(state)
@@ -488,6 +521,10 @@ def apply_confirm_trade(state: State, action: Action):
     offering = action.value[:5]
     asking = action.value[5:10]
     enemy_color = action.value[10]
+    if not player_resource_freqdeck_contains(state, action.color, offering):
+        raise ValueError("Offerer no longer holds the offered cards")
+    if not player_resource_freqdeck_contains(state, enemy_color, asking):
+        raise ValueError("Acceptee does not hold the asked cards")
     player_freqdeck_subtract(state, action.color, offering)
     player_freqdeck_add(state, action.color, asking)
     player_freqdeck_subtract(state, enemy_color, asking)
@@ -526,10 +563,14 @@ def yield_resources(board: Board, resource_freqdeck, number):
         resource_freqdeck (List[int]): Bank's resource freqdeck
         number (int): Sum of dice roll
 
+    Official bank-shortage rule: if the bank cannot pay everyone for a
+    resource, nobody receives that resource, UNLESS only one player is owed
+    it, in which case that player receives whatever the bank has left.
+
     Returns:
         (dict, List[int]): 2-tuple.
             First element is color => freqdeck mapping. e.g. {Color.RED: [0,0,0,3,0]}.
-            Second is an array of resources that couldn't be yieleded
+            Second is an array of resources that couldn't be (fully) yielded
             because they depleted.
     """
     intented_payout: Dict[Color, Dict[FastResource, int]] = defaultdict(
@@ -567,6 +608,13 @@ def yield_resources(board: Board, resource_freqdeck, number):
         for resource, count in player_payout.items():
             if resource not in depleted:
                 freqdeck_replenish(payout[player], count, resource)
+            else:
+                recipients = [
+                    p for p, pp in intented_payout.items() if pp.get(resource, 0) > 0
+                ]
+                if len(recipients) == 1:  # sole recipient gets what's left
+                    available = freqdeck_count(resource_freqdeck, resource)
+                    freqdeck_replenish(payout[player], min(count, available), resource)
 
     return payout, depleted
 

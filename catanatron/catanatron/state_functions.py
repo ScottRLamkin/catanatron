@@ -24,19 +24,23 @@ from catanatron.state import State
 
 
 def maintain_longest_road(state: State, previous_road_color, road_color, road_lengths):
+    """Syncs LONGEST_ROAD_LENGTH features and moves the 2 Longest Road VPs
+    from `previous_road_color` to `road_color`. Either may be None (e.g. the
+    card is "set aside" after a road is cut and there is a tie)."""
     for color, length in road_lengths.items():
         key = player_key(state, color)
         state.player_state[f"{key}_LONGEST_ROAD_LENGTH"] = length
 
-    # If road_color is not set or is the same as before, do nothing.
-    if road_color is None or (previous_road_color == road_color):
+    # If holder didn't change, do nothing.
+    if previous_road_color == road_color:
         return
 
-    # Set new longest road player and unset previous if any.
-    winner_key = player_key(state, road_color)
-    state.player_state[f"{winner_key}_HAS_ROAD"] = True
-    state.player_state[f"{winner_key}_VICTORY_POINTS"] += 2
-    state.player_state[f"{winner_key}_ACTUAL_VICTORY_POINTS"] += 2
+    # Set new longest road player (if any) and unset previous (if any).
+    if road_color is not None:
+        winner_key = player_key(state, road_color)
+        state.player_state[f"{winner_key}_HAS_ROAD"] = True
+        state.player_state[f"{winner_key}_VICTORY_POINTS"] += 2
+        state.player_state[f"{winner_key}_ACTUAL_VICTORY_POINTS"] += 2
     if previous_road_color is not None:
         loser_key = player_key(state, previous_road_color)
         state.player_state[f"{loser_key}_HAS_ROAD"] = False
@@ -339,6 +343,7 @@ def player_clean_turn(state: State, color):
     key = player_key(state, color)
     state.player_state[f"{key}_HAS_PLAYED_DEVELOPMENT_CARD_IN_TURN"] = False
     state.player_state[f"{key}_HAS_ROLLED"] = False
+    state.turn_trade_offers = ()  # reset per-turn domestic trade offer log
     # Dev cards owned this turn will be playable next turn
     state.player_state[f"{key}_KNIGHT_OWNED_AT_START"] = (
         state.player_state[f"{key}_KNIGHT_IN_HAND"] > 0

@@ -135,14 +135,10 @@ class Board:
 
                     # Update longest road by plowed player. Compare again with all
                     self.road_lengths[edge_color] = max(
-                        *[
-                            len(longest_acyclic_path(self, component, edge_color))
-                            for component in self.connected_components[edge_color]
-                        ]
+                        len(longest_acyclic_path(self, component, edge_color))
+                        for component in self.connected_components[edge_color]
                     )
-                    self.road_color, self.road_length = max(
-                        self.road_lengths.items(), key=lambda e: e[1]
-                    )
+                    self._recount_longest_road()
 
         self.board_buildable_ids.discard(node_id)
         for n in STATIC_GRAPH.neighbors(node_id):
@@ -151,6 +147,32 @@ class Board:
         self.buildable_edges_cache = {}  # Reset buildable_edges
         self.player_port_resources_cache = {}  # Reset port resources
         return previous_road_color, self.road_color, self.road_lengths
+
+    def _recount_longest_road(self):
+        """Re-assigns the Longest Road card after a road has been cut.
+
+        Official rules:
+        - Longest Road needs at least 5 continuous roads.
+        - If the holder still has (or ties for) the longest road, they keep it.
+        - Otherwise, the player with the sole longest road takes it. If there
+          is a tie among the others, the card is set aside (nobody holds it)
+          until one player has the longest road again.
+        """
+        previous_color = self.road_color
+        longest = max(self.road_lengths.values(), default=0)
+        if longest < 5:
+            self.road_color = None
+            self.road_length = 0
+            return
+
+        candidates = [c for c, l in self.road_lengths.items() if l == longest]
+        if previous_color in candidates:
+            self.road_color = previous_color
+        elif len(candidates) == 1:
+            self.road_color = candidates[0]
+        else:
+            self.road_color = None  # tie: card is set aside
+        self.road_length = longest
 
     def dfs_walk(self, node_id, color):
         """Generates set of nodes that are "connected" to given node.

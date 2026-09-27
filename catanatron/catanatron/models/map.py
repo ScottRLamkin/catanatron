@@ -216,8 +216,10 @@ class CatanMap:
         self.ports_by_id = ports_by_id
 
     @staticmethod
-    def from_template(map_template: MapTemplate):
-        tiles = initialize_tiles(map_template)
+    def from_template(map_template: MapTemplate, rng=None):
+        """Builds a random map. `rng` (random.Random) makes it reproducible;
+        defaults to the global `random` module."""
+        tiles = initialize_tiles(map_template, rng=rng)
 
         return CatanMap.from_tiles(tiles)
 
@@ -321,6 +323,7 @@ def initialize_tiles(
     shuffled_numbers_param=None,
     shuffled_port_resources_param=None,
     shuffled_tile_resources_param=None,
+    rng=None,
 ) -> Dict[Coordinate, Tile]:
     """Initializes a new random board, based on the MapTemplate.
 
@@ -330,6 +333,8 @@ def initialize_tiles(
 
     Args:
         map_template (MapTemplate): Template to initialize.
+        rng (random.Random, optional): Source of randomness. Defaults to
+            the global `random` module.
 
     Raises:
         ValueError: Invalid tile in topology
@@ -337,13 +342,14 @@ def initialize_tiles(
     Returns:
         Dict[Coordinate, Tile]: Coordinate to initialized Tile mapping.
     """
-    shuffled_port_resources = shuffled_port_resources_param or random.sample(
+    rng = rng or random
+    shuffled_port_resources = shuffled_port_resources_param or rng.sample(
         map_template.port_resources, len(map_template.port_resources)
     )
-    shuffled_tile_resources = shuffled_tile_resources_param or random.sample(
+    shuffled_tile_resources = shuffled_tile_resources_param or rng.sample(
         map_template.tile_resources, len(map_template.tile_resources)
     )
-    shuffled_numbers = shuffled_numbers_param or random.sample(
+    shuffled_numbers = shuffled_numbers_param or rng.sample(
         map_template.numbers, len(map_template.numbers)
     )
 
@@ -516,10 +522,12 @@ TOURNAMENT_MAP_TILES = initialize_tiles(
 TOURNAMENT_MAP = CatanMap.from_tiles(TOURNAMENT_MAP_TILES)
 
 
-def build_map(map_type: Literal["BASE", "TOURNAMENT", "MINI"]):
+def build_map(map_type: Literal["BASE", "TOURNAMENT", "MINI"], rng=None):
+    """Builds a map of the given type. Pass `rng=random.Random(seed)` for a
+    reproducible map; defaults to the global `random` module."""
     if map_type == "TOURNAMENT":
         return TOURNAMENT_MAP  # this assumes map is read-only data struct
     elif map_type == "MINI":
-        return CatanMap.from_template(MINI_MAP_TEMPLATE)
+        return CatanMap.from_template(MINI_MAP_TEMPLATE, rng=rng)
     else:
-        return CatanMap.from_template(BASE_MAP_TEMPLATE)
+        return CatanMap.from_template(BASE_MAP_TEMPLATE, rng=rng)

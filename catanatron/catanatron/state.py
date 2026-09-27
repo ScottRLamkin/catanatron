@@ -28,6 +28,8 @@ PLAYER_INITIAL_STATE = {
     "HAS_ARMY": False,
     "HAS_ROLLED": False,
     "HAS_PLAYED_DEVELOPMENT_CARD_IN_TURN": False,
+    # Number of resource cards this player still has to discard (7 rolled).
+    "DISCARD_OWED": 0,
     # de-normalized features (for performance since we think they are good features)
     "ACTUAL_VICTORY_POINTS": 0,
     "LONGEST_ROAD_LENGTH": 0,
@@ -81,6 +83,17 @@ class State:
             Building dev card.
         free_roads_available (int): Number of roads available left in Road Building
             phase.
+        is_resolving_trade (bool): If a domestic trade offer is being resolved.
+        current_trade (Tuple): 11-tuple: 5 offered freqdeck, 5 asked freqdeck,
+            index of offering player.
+        acceptees (Tuple[bool]): Per-seat flags of who accepted current_trade.
+        max_trade_offers_per_turn (int): Cap on OFFER_TRADE actions per turn.
+        turn_trade_offers (Tuple[Tuple]): 10-tuples of the offers made by the
+            current-turn player so far this turn (reset at END_TURN). Used to
+            enforce the cap and to disallow repeating an identical offer.
+        rng (random.Random | None): Random generator used to build the map,
+            seat players and shuffle the development deck. Global `random`
+            module is used when None (backwards compatible).
     """
 
     def __init__(
@@ -89,12 +102,18 @@ class State:
         catan_map=None,
         discard_limit=7,
         initialize=True,
+        max_trade_offers_per_turn=3,
+        rng=None,
     ):
         if initialize:
-            self.players = random.sample(players, len(players))
+            rng = rng or random
+            self.players = rng.sample(players, len(players))
             self.colors = tuple([player.color for player in self.players])
-            self.board = Board(catan_map or CatanMap.from_template(BASE_MAP_TEMPLATE))
+            self.board = Board(
+                catan_map or CatanMap.from_template(BASE_MAP_TEMPLATE, rng=rng)
+            )
             self.discard_limit = discard_limit
+            self.max_trade_offers_per_turn = max_trade_offers_per_turn
 
             # feature-ready dictionary
             self.player_state = dict()
@@ -107,7 +126,7 @@ class State:
 
             self.resource_freqdeck = starting_resource_bank()
             self.development_listdeck = starting_devcard_bank()
-            random.shuffle(self.development_listdeck)
+            rng.shuffle(self.development_listdeck)
 
             # Auxiliary attributes to implement game logic
             self.buildings_by_color: Dict[Color, Dict[Any, Any]] = {
@@ -133,6 +152,7 @@ class State:
             self.is_resolving_trade = False
             self.current_trade: Tuple = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             self.acceptees = tuple(False for _ in self.colors)
+            self.turn_trade_offers: Tuple[Tuple, ...] = ()
 
     def current_player(self):
         """Helper for accessing Player instance who should decide next"""
@@ -152,6 +172,7 @@ class State:
         state_copy = State([], None, initialize=False)
         state_copy.players = self.players
         state_copy.discard_limit = self.discard_limit  # immutable
+        state_copy.max_trade_offers_per_turn = self.max_trade_offers_per_turn
 
         state_copy.board = self.board.copy()
 
@@ -183,5 +204,6 @@ class State:
         state_copy.is_resolving_trade = self.is_resolving_trade
         state_copy.current_trade = self.current_trade
         state_copy.acceptees = self.acceptees
+        state_copy.turn_trade_offers = self.turn_trade_offers  # immutable
 
         return state_copy
