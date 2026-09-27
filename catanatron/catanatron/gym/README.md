@@ -8,7 +8,11 @@ uv add catanatron[gym]
 
 (or `pip install catanatron[gym]`)
 
-Make your training loop, ensuring to respect `env.get_valid_actions()`.
+The action space includes rolling, building, buying/playing development cards,
+maritime trade, discarding on a 7 (one resource at a time), moving the robber
+(picking a victim by relative seat), and domestic (player-to-player) trading
+(a fixed enumeration of offers, plus accept/reject/confirm/cancel). Make your
+training loop, ensuring to respect `env.get_valid_actions()`.
 
 ```python
 import random

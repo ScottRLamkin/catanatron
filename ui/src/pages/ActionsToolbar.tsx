@@ -30,7 +30,7 @@ import ACTIONS from "../actions";
 import type { GameAction, ResourceCard } from "../utils/api.types"; // Add GameState to the import, adjust path if needed
 import { getHumanColor, playerKey } from "../utils/stateUtils";
 import { postAction } from "../utils/apiClient";
-import { humanizeTradeAction } from "../utils/promptUtils";
+import { humanizeTradeAction, humanizeOfferTradeAction } from "../utils/promptUtils";
 
 import "./ActionsToolbar.scss";
 import { useSnackbar } from "notistack";
@@ -70,6 +70,8 @@ function PlayButtons() {
     !gameState.player_state[`${key}_HAS_ROLLED`];
   const isDiscard = gameState.current_prompt === "DISCARD";
   const isMoveRobber = gameState.current_prompt === "MOVE_ROBBER";
+  const isDecidingTrade = gameState.current_prompt === "DECIDE_TRADE";
+  const isDecidingAcceptees = gameState.current_prompt === "DECIDE_ACCEPTEES";
   const isPlayingDevCard =
     isPlayingMonopoly || isPlayingYearOfPlenty || isRoadBuilding;
   const playableDevCardTypes = new Set(
@@ -226,12 +228,104 @@ function PlayButtons() {
     return items.sort((a, b) => a.label.localeCompare(b.label));
   }, [tradeActions, carryOutAction]);
 
+  const offerTradeActions = gameState.current_playable_actions.filter(
+    (action) => action[1] === "OFFER_TRADE"
+  );
+  const offerTradeItems = React.useMemo(() => {
+    return offerTradeActions.map((action) => ({
+      label: humanizeOfferTradeAction(action as any),
+      disabled: false,
+      onClick: carryOutAction(action),
+    }));
+  }, [offerTradeActions, carryOutAction]);
+
+  const discardActions = gameState.current_playable_actions.filter(
+    (action) => action[1] === "DISCARD"
+  );
+  const acceptTradeAction = gameState.current_playable_actions.find(
+    (action) => action[1] === "ACCEPT_TRADE"
+  );
+  const rejectTradeAction = gameState.current_playable_actions.find(
+    (action) => action[1] === "REJECT_TRADE"
+  );
+  const confirmTradeActions = gameState.current_playable_actions.filter(
+    (action) => action[1] === "CONFIRM_TRADE"
+  );
+  const cancelTradeAction = gameState.current_playable_actions.find(
+    (action) => action[1] === "CANCEL_TRADE"
+  );
+
   const setIsMovingRobber = useCallback(() => {
     dispatch({ type: ACTIONS.SET_IS_MOVING_ROBBER });
   }, [dispatch]);
   const rollAction = carryOutAction([humanColor, "ROLL", null]);
-  const proceedAction = carryOutAction();
   const endTurnAction = carryOutAction([humanColor, "END_TURN", null]);
+
+  if (isDecidingTrade) {
+    return (
+      <>
+        <Button
+          disabled={!rejectTradeAction}
+          variant="outlined"
+          color="secondary"
+          onClick={rejectTradeAction && carryOutAction(rejectTradeAction)}
+        >
+          REJECT TRADE
+        </Button>
+        <Button
+          disabled={!acceptTradeAction}
+          variant="contained"
+          color="primary"
+          onClick={acceptTradeAction && carryOutAction(acceptTradeAction)}
+        >
+          ACCEPT TRADE
+        </Button>
+      </>
+    );
+  }
+
+  if (isDecidingAcceptees) {
+    return (
+      <>
+        {confirmTradeActions.map((action) => (
+          <Button
+            key={(action[2] as any)[10]}
+            variant="contained"
+            color="primary"
+            onClick={carryOutAction(action)}
+          >
+            TRADE WITH {(action[2] as any)[10]}
+          </Button>
+        ))}
+        <Button
+          disabled={!cancelTradeAction}
+          variant="outlined"
+          color="secondary"
+          onClick={cancelTradeAction && carryOutAction(cancelTradeAction)}
+        >
+          CANCEL TRADE
+        </Button>
+      </>
+    );
+  }
+
+  if (isDiscard) {
+    return (
+      <>
+        {discardActions.map((action) => (
+          <Button
+            key={action[2] as string}
+            variant="contained"
+            color="primary"
+            onClick={carryOutAction(action)}
+          >
+            DISCARD {action[2] as string}
+          </Button>
+        ))}
+      </>
+    );
+  }
+
   return (
     <>
       <OptionsButton
@@ -258,15 +352,21 @@ function PlayButtons() {
       >
         Trade
       </OptionsButton>
+      <OptionsButton
+        disabled={offerTradeItems.length === 0 || isPlayingDevCard}
+        menuListId="offer-trade-menu-list"
+        icon={<AccountBalanceIcon />}
+        items={offerTradeItems}
+      >
+        Offer Trade
+      </OptionsButton>
       <Button
         disabled={gameState.is_initial_build_phase || isRoadBuilding}
         variant="contained"
         color="primary"
         startIcon={<NavigateNextIcon />}
         onClick={
-          isDiscard
-            ? proceedAction
-            : isMoveRobber
+          isMoveRobber
             ? setIsMovingRobber
             : isPlayingYearOfPlenty || isPlayingMonopoly
             ? handleOpenResourceSelector
@@ -275,9 +375,7 @@ function PlayButtons() {
             : endTurnAction
         }
       >
-        {isDiscard
-          ? "DISCARD"
-          : isMoveRobber
+        {isMoveRobber
           ? "ROB"
           : isPlayingYearOfPlenty || isPlayingMonopoly
           ? "SELECT"

@@ -38,6 +38,21 @@ def action_from_json(data) -> Action:
     elif action_type == ActionType.MARITIME_TRADE:
         value = tuple(data[2])
         action = Action(color, action_type, value)
+    elif action_type in (
+        ActionType.OFFER_TRADE,
+        ActionType.ACCEPT_TRADE,
+        ActionType.REJECT_TRADE,
+    ):
+        # 10-tuple (offered freqdeck + asked freqdeck), or an 11-tuple for
+        # ACCEPT/REJECT_TRADE (same, plus the offerer's index).
+        action = Action(color, action_type, tuple(data[2]))
+    elif action_type == ActionType.CONFIRM_TRADE:
+        # 11-tuple: 10-value offer plus the accepting player's Color.
+        *offer, acceptee = data[2]
+        action = Action(color, action_type, (*offer, Color[acceptee]))
+    elif action_type == ActionType.DISCARD:
+        # A single resource (string).
+        action = Action(color, action_type, data[2])
     else:
         action = Action(color, action_type, data[2])
     return action
@@ -101,6 +116,13 @@ class GameEncoder(json.JSONEncoder):
                 "longest_roads_by_player": longest_roads_by_player(obj.state),
                 "winning_color": obj.winning_color(),
                 "state_index": get_state_index(obj.state),
+                "current_trade": obj.state.current_trade,
+                "acceptees": {
+                    color.value: accepted
+                    for color, accepted in zip(obj.state.colors, obj.state.acceptees)
+                },
+                "turn_trade_offers": obj.state.turn_trade_offers,
+                "max_trade_offers_per_turn": obj.state.max_trade_offers_per_turn,
             }
         if isinstance(obj, Water):
             return {"type": "WATER"}

@@ -13,7 +13,8 @@ import type { CatanState } from "../store";
 import { useParams } from "react-router";
 import ACTIONS from "../actions";
 import Board from "./Board";
-import type { GameAction, TileCoordinate } from "../utils/api.types";
+import type { GameAction, MoveRobberAction, TileCoordinate } from "../utils/api.types";
+import { Button, Paper } from "@mui/material";
 
 /**
  * Returns object representing actions to be taken if click on node.
@@ -94,6 +95,9 @@ export default function ZoomableBoard({ replayMode }: ZoomableBoardProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.up("md"));
   const [show, setShow] = useState(false);
+  const [robberVictimChoices, setRobberVictimChoices] = useState<
+    MoveRobberAction[] | null
+  >(null);
   const gameState = state.gameState
   if (!gameState)
     throw new Error("GameState is not ready!");
@@ -126,21 +130,36 @@ export default function ZoomableBoard({ replayMode }: ZoomableBoardProps) {
     memoize((coordinate: TileCoordinate) => {
       console.log("Clicked Tile ", coordinate);
       if (state.isMovingRobber) {
-        // Find the "MOVE_ROBBER" action in current_playable_actions that
-        // corresponds to the tile coordinate selected by the user
-        const matchingAction = gameState.current_playable_actions.find(
-          ([, action_type, [action_coordinate, ,]]) =>
-            action_type === "MOVE_ROBBER" &&
-            action_coordinate.every((val: number, index: number) => val === coordinate[index])
+        // Find all "MOVE_ROBBER" actions in current_playable_actions that
+        // correspond to the tile coordinate selected by the user (there can
+        // be more than one, one per possible victim to steal from).
+        const matchingActions = gameState.current_playable_actions.filter(
+          (action): action is MoveRobberAction =>
+            action[1] === "MOVE_ROBBER" &&
+            action[2][0].every(
+              (val: number, index: number) => val === coordinate[index]
+            )
         );
-        if (matchingAction) {
-          postAction(gameId, matchingAction).then((gameState) => {
+        if (matchingActions.length === 1) {
+          postAction(gameId, matchingActions[0]).then((gameState) => {
             dispatch({ type: ACTIONS.SET_GAME_STATE, data: gameState });
           });
+        } else if (matchingActions.length > 1) {
+          // Multiple possible victims on this tile: let the human pick one.
+          setRobberVictimChoices(matchingActions);
         }
       }
     }),
     [state.isMovingRobber]
+  );
+  const chooseRobberVictim = useCallback(
+    (action: MoveRobberAction) => () => {
+      setRobberVictimChoices(null);
+      postAction(gameId, action).then((gameState) => {
+        dispatch({ type: ACTIONS.SET_GAME_STATE, data: gameState });
+      });
+    },
+    [gameId, dispatch]
   );
 
   const nodeActions = replayMode ? {} : buildNodeActions(state);
@@ -151,6 +170,12 @@ export default function ZoomableBoard({ replayMode }: ZoomableBoardProps) {
       setShow(true);
     }, 300);
   }, []);
+
+  useEffect(() => {
+    if (!state.isMovingRobber) {
+      setRobberVictimChoices(null);
+    }
+  }, [state.isMovingRobber]);
 
   if (!width || !height) return;
 
@@ -174,6 +199,34 @@ export default function ZoomableBoard({ replayMode }: ZoomableBoardProps) {
           />
         </TransformComponent>
       </div>
+      {robberVictimChoices && (
+        <Paper
+          className="robber-victim-picker"
+          style={{
+            position: "fixed",
+            bottom: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: 12,
+            zIndex: 1300,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <span>Choose who to steal from:</span>
+          {robberVictimChoices.map((action) => (
+            <Button
+              key={action[2][1]}
+              variant="contained"
+              size="small"
+              onClick={chooseRobberVictim(action)}
+            >
+              {action[2][1]}
+            </Button>
+          ))}
+        </Paper>
+      )}
     </TransformWrapper>
   );
 }

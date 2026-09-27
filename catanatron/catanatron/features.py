@@ -20,6 +20,7 @@ from catanatron.models.enums import (
     CITY,
     ROAD,
     ActionType,
+    ActionPrompt,
     VICTORY_POINT,
 )
 from catanatron.game import Game
@@ -477,15 +478,45 @@ def port_distance_features(game: Game, p0_color: Color):
 def game_features(game: Game, p0_color: Color):
     # BANK_WOODS, BANK_WHEATS, ..., BANK_DEV_CARDS
     possibilities = set([a.action_type for a in game.playable_actions])
+    state = game.state
+    p0_key = player_key(state, p0_color)
     features = {
-        "BANK_DEV_CARDS": len(game.state.development_listdeck),
+        "BANK_DEV_CARDS": len(state.development_listdeck),
         "IS_MOVING_ROBBER": ActionType.MOVE_ROBBER in possibilities,
         "IS_DISCARDING": ActionType.DISCARD in possibilities,
+        "IS_DECIDING_TRADE": state.current_prompt == ActionPrompt.DECIDE_TRADE,
+        "IS_DECIDING_ACCEPTEES": state.current_prompt == ActionPrompt.DECIDE_ACCEPTEES,
+        "P0_DISCARD_OWED": state.player_state.get(f"{p0_key}_DISCARD_OWED", 0),
+        "P0_TRADE_OFFERS_MADE_THIS_TURN": len(state.turn_trade_offers)
+        if state.current_color() == p0_color
+        else 0,
     }
     for resource in RESOURCES:
         features[f"BANK_{resource}"] = freqdeck_count(
-            game.state.resource_freqdeck, resource
+            state.resource_freqdeck, resource
         )
+
+    # Current trade offer, from p0's perspective: if p0 made the offer, offered
+    # is what p0 gives and asked is what p0 wants; if p0 didn't make it (e.g.
+    # p0 is being asked to accept/reject it), same orientation (state.current_trade
+    # is always stored as offerer-gives/offerer-asks, i.e. from the offerer's POV).
+    has_active_trade = any(state.current_trade[:10])
+    offerer_index = state.current_trade[10] if len(state.current_trade) > 10 else None
+    for i, resource in enumerate(RESOURCES):
+        features[f"CURRENT_TRADE_IS_OFFERED_{resource}"] = (
+            state.current_trade[i] if has_active_trade else 0
+        )
+        features[f"CURRENT_TRADE_IS_ASKED_{resource}"] = (
+            state.current_trade[5 + i] if has_active_trade else 0
+        )
+    for i, color in iter_players(state.colors, p0_color):
+        offerer_relative = (
+            (offerer_index - state.color_to_index[p0_color]) % len(state.colors)
+            if has_active_trade and offerer_index is not None
+            else None
+        )
+        features[f"CURRENT_TRADE_OFFERER_IS_P{i}"] = i == offerer_relative
+
     return features
 
 

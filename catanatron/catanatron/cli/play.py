@@ -1,4 +1,6 @@
 import os
+import random
+import sys
 import importlib.util
 from dataclasses import dataclass
 from typing import Literal, Union
@@ -238,9 +240,13 @@ def play_batch_core(num_games, players, game_config, accumulators=[]):
     for _ in range(num_games):
         for player in players:
             player.reset_state()
-        catan_map = build_map(game_config.catan_map)
+        # Build the map with a rng derived from the same seed Game will use,
+        # so the map, seating order and dev deck are all reproducible together.
+        seed = random.randrange(sys.maxsize)
+        catan_map = build_map(game_config.catan_map, rng=random.Random(seed))
         game = Game(
             players,
+            seed=seed,
             discard_limit=game_config.discard_limit,
             vps_to_win=game_config.vps_to_win,
             catan_map=catan_map,

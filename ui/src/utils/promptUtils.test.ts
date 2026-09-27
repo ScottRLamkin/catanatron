@@ -180,10 +180,10 @@ describe("humanizeAction", () => {
   test("DISCARD action", () => {
     expect(
       humanizeActionRecord(baseGameState, [
-        ["ORANGE", "DISCARD", null],
-        ["WHEAT"],
+        ["ORANGE", "DISCARD", "WHEAT"],
+        null,
       ])
-    ).toBe("YOU DISCARDED");
+    ).toBe("YOU DISCARDED WHEAT");
   });
 
   test("BUY_DEVELOPMENT_CARD action", () => {
@@ -273,7 +273,7 @@ describe("humanizeAction", () => {
 
   test("MOVE_ROBBER action without stolen resource", () => {
     const actionRecord: GameActionRecord = [
-      ["RED", "MOVE_ROBBER", [[0, 0, 0], undefined]],
+      ["RED", "MOVE_ROBBER", [[0, 0, 0], null]],
       null,
     ];
     expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
@@ -288,6 +288,57 @@ describe("humanizeAction", () => {
     ];
     expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
       "YOU TRADED 3 BRICK => WHEAT"
+    );
+  });
+
+  test("OFFER_TRADE action", () => {
+    const actionRecord: GameActionRecord = [
+      ["RED", "OFFER_TRADE", [1, 0, 0, 0, 0, 0, 0, 0, 0, 1]],
+      null,
+    ];
+    expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
+      "BOT OFFERED TRADE: 1 WOOD FOR 1 ORE"
+    );
+  });
+
+  test("ACCEPT_TRADE action", () => {
+    const actionRecord: GameActionRecord = [
+      ["ORANGE", "ACCEPT_TRADE", [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]],
+      null,
+    ];
+    expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
+      "YOU ACCEPTED TRADE OFFER"
+    );
+  });
+
+  test("REJECT_TRADE action", () => {
+    const actionRecord: GameActionRecord = [
+      ["ORANGE", "REJECT_TRADE", [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]],
+      null,
+    ];
+    expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
+      "YOU REJECTED TRADE OFFER"
+    );
+  });
+
+  test("CONFIRM_TRADE action", () => {
+    const actionRecord: GameActionRecord = [
+      [
+        "RED",
+        "CONFIRM_TRADE",
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, "BLUE"],
+      ],
+      null,
+    ];
+    expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
+      "BOT TRADED WITH BLUE"
+    );
+  });
+
+  test("CANCEL_TRADE action", () => {
+    const actionRecord: GameActionRecord = [["RED", "CANCEL_TRADE", null], null];
+    expect(humanizeActionRecord(baseGameState, actionRecord)).toBe(
+      "BOT CANCELLED TRADE"
     );
   });
 

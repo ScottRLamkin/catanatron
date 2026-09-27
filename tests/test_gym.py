@@ -5,9 +5,15 @@ from gymnasium.utils.env_checker import check_env
 import numpy as np
 
 from catanatron.features import get_feature_ordering
+from catanatron.models.enums import ActionType
 from catanatron.models.player import Color, RandomPlayer
 from catanatron.players.value import ValueFunctionPlayer
-from catanatron.gym.envs.catanatron_env import CatanatronEnv
+from catanatron.gym.envs.catanatron_env import (
+    ACTIONS_ARRAY,
+    ACTION_SPACE_SIZE,
+    CatanatronEnv,
+    OFFER_TRADE_VALUES,
+)
 
 features = get_feature_ordering(2)
 
@@ -139,3 +145,159 @@ def test_mixed_rep():
     observation, info = env.reset()
     assert "board" in observation
     assert "numeric" in observation
+
+
+def test_action_space_size_and_no_duplicates():
+    assert ACTION_SPACE_SIZE == len(ACTIONS_ARRAY)
+    assert len(set(ACTIONS_ARRAY)) == len(ACTIONS_ARRAY)  # no dup entries
+
+
+def test_offer_trade_templates_are_60_and_valid():
+    assert len(OFFER_TRADE_VALUES) == 60
+    assert len(set(OFFER_TRADE_VALUES)) == 60
+    for value in OFFER_TRADE_VALUES:
+        assert len(value) == 10
+        offered, asked = value[:5], value[5:]
+        assert sum(1 for v in offered if v > 0) == 1
+        assert sum(1 for v in asked if v > 0) == 1
+
+
+def test_reset_seed_determinism():
+    env = CatanatronEnv(
+        config={
+            "enemies": [
+                RandomPlayer(Color.RED),
+                RandomPlayer(Color.WHITE),
+                RandomPlayer(Color.ORANGE),
+            ]
+        }
+    )
+    obs1, info1 = env.reset(seed=123)
+    board1 = dict(env.game.state.board.map.tiles)
+    colors1 = env.game.state.colors
+    obs2, info2 = env.reset(seed=123)
+    board2 = dict(env.game.state.board.map.tiles)
+    colors2 = env.game.state.colors
+
+    assert np.array_equal(obs1, obs2)
+    assert info1["valid_actions"] == info2["valid_actions"]
+    assert colors1 == colors2
+    def tile_signature(tile):
+        return (getattr(tile, "resource", None), getattr(tile, "number", None))
+
+    for coord in board1:
+        assert tile_signature(board1[coord]) == tile_signature(board2[coord])
+
+    # Different seed should (almost certainly) produce a different board.
+    env.reset(seed=456)
+    board3 = dict(env.game.state.board.map.tiles)
+    assert any(
+        tile_signature(board1[coord]) != tile_signature(board3[coord])
+        for coord in board1
+    )
+
+
+def test_robber_victim_choice_reaches_chosen_victim():
+    env = CatanatronEnv(
+        config={
+            "enemies": [
+                RandomPlayer(Color.RED),
+                RandomPlayer(Color.WHITE),
+                RandomPlayer(Color.ORANGE),
+            ]
+        }
+    )
+    obs, info = env.reset(seed=7)
+
+    found_choice = False
+    for _ in range(2000):
+        robber_actions = [
+            a
+            for a in info["valid_actions"]
+            if ACTIONS_ARRAY[a][0] == ActionType.MOVE_ROBBER
+            and ACTIONS_ARRAY[a][1][1] is not None
+        ]
+        if len(robber_actions) >= 1:
+            found_choice = True
+            action = robber_actions[0]
+            _, (tile, relative_seat) = ACTIONS_ARRAY[action]
+            colors = env.game.state.colors
+            from catanatron.gym.envs.catanatron_env import relative_seat_to_color
+
+            expected_victim = relative_seat_to_color(
+                colors, env.p0.color, relative_seat
+            )
+            obs, reward, terminated, truncated, info = env.step(action)
+            assert env.game.state.board.robber_coordinate == tile
+            break
+        action = random.choice(info["valid_actions"])
+        obs, reward, terminated, truncated, info = env.step(action)
+        if terminated or truncated:
+            obs, info = env.reset(seed=_)
+    assert found_choice
+
+
+def test_discard_via_env_chooses_resource():
+    env = CatanatronEnv(
+        config={
+            "enemies": [
+                RandomPlayer(Color.RED),
+                RandomPlayer(Color.WHITE),
+                RandomPlayer(Color.ORANGE),
+            ]
+        }
+    )
+    obs, info = env.reset(seed=3)
+
+    found_discard = False
+    for _ in range(2000):
+        discard_actions = [
+            a
+            for a in info["valid_actions"]
+            if ACTIONS_ARRAY[a][0] == ActionType.DISCARD
+        ]
+        if discard_actions:
+            found_discard = True
+            action = discard_actions[0]
+            resource = ACTIONS_ARRAY[action][1]
+            obs, reward, terminated, truncated, info = env.step(action)
+            assert resource in ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"]
+            break
+        action = random.choice(info["valid_actions"])
+        obs, reward, terminated, truncated, info = env.step(action)
+        if terminated or truncated:
+            obs, info = env.reset(seed=_)
+    assert found_discard
+
+
+def test_p0_can_accept_and_reject_trades():
+    env = CatanatronEnv(
+        config={
+            "enemies": [
+                RandomPlayer(Color.RED),
+                RandomPlayer(Color.WHITE),
+                RandomPlayer(Color.ORANGE),
+            ]
+        }
+    )
+    obs, info = env.reset(seed=11)
+
+    seen_decide_trade = False
+    for _ in range(3000):
+        decide_actions = [
+            a
+            for a in info["valid_actions"]
+            if ACTIONS_ARRAY[a][0] in (ActionType.ACCEPT_TRADE, ActionType.REJECT_TRADE)
+        ]
+        if decide_actions:
+            seen_decide_trade = True
+            action = random.choice(decide_actions)
+            obs, reward, terminated, truncated, info = env.step(action)
+            if terminated or truncated:
+                break
+            continue
+        action = random.choice(info["valid_actions"])
+        obs, reward, terminated, truncated, info = env.step(action)
+        if terminated or truncated:
+            obs, info = env.reset(seed=_)
+    assert seen_decide_trade

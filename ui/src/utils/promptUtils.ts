@@ -3,6 +3,8 @@ import type {
   PlacedTile,
   GameActionRecord,
   MaritimeTradeAction,
+  OfferTradeAction,
+  ConfirmTradeAction,
   BuildCityAction,
   BuildRoadAction,
   PlayYearOfPlentyAction,
@@ -23,7 +25,7 @@ export function humanizeActionRecord(
       return `${player} ROLLED A ${action[0] + action[1]}`;
     }
     case "DISCARD":
-      return `${player} DISCARDED`;
+      return `${player} DISCARDED ${action[2]}`;
     case "BUY_DEVELOPMENT_CARD":
       return `${player} BOUGHT DEVELOPMENT CARD`;
     case "BUILD_SETTLEMENT":
@@ -79,6 +81,21 @@ export function humanizeActionRecord(
       const label = humanizeTradeAction(action as MaritimeTradeAction);
       return `${player} TRADED ${label}`;
     }
+    case "OFFER_TRADE": {
+      const label = humanizeOfferTradeAction(action as OfferTradeAction);
+      return `${player} OFFERED TRADE: ${label}`;
+    }
+    case "ACCEPT_TRADE":
+      return `${player} ACCEPTED TRADE OFFER`;
+    case "REJECT_TRADE":
+      return `${player} REJECTED TRADE OFFER`;
+    case "CONFIRM_TRADE": {
+      const confirmAction = action as ConfirmTradeAction;
+      const acceptee = confirmAction[2][10];
+      return `${player} TRADED WITH ${acceptee}`;
+    }
+    case "CANCEL_TRADE":
+      return `${player} CANCELLED TRADE`;
     case "END_TURN":
       return `${player} ENDED TURN`;
     default:
@@ -90,6 +107,19 @@ export function humanizeTradeAction(action: MaritimeTradeAction): string {
     .slice(0, 4)
     .filter((resource: unknown) => resource !== null);
   return `${out.length} ${out[0]} => ${action[2][4]}`;
+}
+
+const RESOURCES = ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"] as const;
+
+export function humanizeOfferTradeAction(action: OfferTradeAction): string {
+  const value = action[2];
+  const offered = RESOURCES.map((r, i) => `${value[i]} ${r}`).filter(
+    (_, i) => value[i] > 0
+  );
+  const asked = RESOURCES.map((r, i) => `${value[5 + i]} ${r}`).filter(
+    (_, i) => value[5 + i] > 0
+  );
+  return `${offered.join(", ")} FOR ${asked.join(", ")}`;
 }
 
 export function findTileByCoordinate(gameState: GameState, coordinate: any) {
