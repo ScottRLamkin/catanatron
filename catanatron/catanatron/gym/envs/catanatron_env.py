@@ -6,7 +6,7 @@ import numpy as np
 from catanatron.game import Game, TURNS_LIMIT
 from catanatron.models.player import Color, Player, RandomPlayer
 from catanatron.models.map import BASE_MAP_TEMPLATE, NUM_NODES, LandTile, build_map
-from catanatron.models.enums import RESOURCES, Action, ActionType
+from catanatron.models.enums import RESOURCES, Action, ActionPrompt, ActionType
 from catanatron.models.board import get_edges
 from catanatron.features import (
     create_sample,
@@ -185,7 +185,13 @@ class CatanatronEnv(gym.Env):
         Returns:
             List[int]: valid actions
         """
-        return list(map(to_action_space, self.game.playable_actions))
+        # TODO(gym follow-up): OFFER_TRADE / trade responses are not part of
+        # ACTIONS_ARRAY yet; the agent can't initiate domestic trades for now.
+        return [
+            to_action_space(a)
+            for a in self.game.playable_actions
+            if a.action_type != ActionType.OFFER_TRADE
+        ]
 
     def step(self, action):
         try:
@@ -257,11 +263,22 @@ class CatanatronEnv(gym.Env):
         return np.array([float(sample[i]) for i in self.features])
 
     def _advance_until_p0_decision(self):
-        while (
-            self.game.winning_color() is None
-            and self.game.state.current_color() != self.p0.color
+        while self.game.winning_color() is None and (
+            self.game.state.current_color() != self.p0.color
+            or self.game.state.current_prompt == ActionPrompt.DECIDE_TRADE
         ):
-            self.game.play_tick()  # will play bot
+            if self.game.state.current_color() == self.p0.color:
+                # TODO(gym follow-up): expose ACCEPT/REJECT_TRADE in the action
+                # space. Until then, the agent auto-rejects domestic trade offers.
+                self.game.execute(
+                    Action(
+                        self.p0.color,
+                        ActionType.REJECT_TRADE,
+                        self.game.state.current_trade,
+                    )
+                )
+            else:
+                self.game.play_tick()  # will play bot
 
 
 CatanatronEnv.__doc__ = f"""
