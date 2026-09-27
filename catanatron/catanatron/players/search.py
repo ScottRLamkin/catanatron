@@ -5,6 +5,7 @@ from catanatron.state_functions import (
 )
 from catanatron.models.player import Player
 from catanatron.game import Game
+from catanatron.players.tree_search_utils import prune_discard_actions
 
 
 class VictoryPointPlayer(Player):
@@ -17,6 +18,9 @@ class VictoryPointPlayer(Player):
     def decide(self, game: Game, playable_actions):
         if len(playable_actions) == 1:
             return playable_actions[0]
+        # Policy: only try the keep-rule discard sets (VPs never depend on
+        # which cards are discarded, and each action costs a game copy).
+        playable_actions = prune_discard_actions(playable_actions, game.state)
 
         best_value = float("-inf")
         best_actions = []

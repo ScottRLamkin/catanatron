@@ -136,25 +136,22 @@ def test_rolling_a_seven_triggers_default_discard_limit(fake_roll_dice):
     assert player_num_resource_cards(game.state, players[1].color) == 9
     game.play_tick()  # should be player 0 rolling.
 
-    # 9 cards => owes floor(9/2) = 4, discarded one card at a time
+    # 9 cards => owes floor(9/2) = 4, chosen as one complete set
     key = player_key(game.state, players[1].color)
     assert game.state.player_state[f"{key}_DISCARD_OWED"] == 4
     assert game.state.is_discarding
     assert len(game.playable_actions) >= 1
-    assert all(
-        a.color == players[1].color
-        and a.action_type == ActionType.DISCARD
-        and a.value in RESOURCES
-        for a in game.playable_actions
-    )
+    hand = get_player_freqdeck(game.state, players[1].color)
     for a in game.playable_actions:
-        assert player_num_resource_cards(game.state, players[1].color, a.value) > 0
+        assert a.color == players[1].color
+        assert a.action_type == ActionType.DISCARD
+        assert len(a.value) == 5 and sum(a.value) == 4
+        assert all(0 <= n <= h for n, h in zip(a.value, hand))
+    assert len(game.playable_actions) == len(set(a.value for a in game.playable_actions))
 
-    for i in range(4):
-        game.play_tick()
-        assert player_num_resource_cards(game.state, players[1].color) == 8 - i
-        assert game.state.player_state[f"{key}_DISCARD_OWED"] == 3 - i
+    game.play_tick()  # submits the set; being the only owing player, applied
     assert player_num_resource_cards(game.state, players[1].color) == 5
+    assert game.state.player_state[f"{key}_DISCARD_OWED"] == 0
     assert not game.state.is_discarding
     assert game.state.current_prompt == ActionPrompt.MOVE_ROBBER
     assert game.state.current_color() == game.state.colors[0]  # the roller
@@ -190,7 +187,8 @@ def test_all_players_discard_as_needed(fake_roll_dice):
     fake_roll_dice.return_value = (1, 6)
     game.play_tick()  # should be p1 rolling a 7
 
-    # discards are asked in seat order, starting from the roller (p1).
+    # discards are asked in seat order, starting from the roller (p1); hands
+    # are untouched until the last owing player submits.
     def assert_discarding(color):
         assert len(game.playable_actions) >= 1
         assert all(
@@ -198,15 +196,20 @@ def test_all_players_discard_as_needed(fake_roll_dice):
             for a in game.playable_actions
         )
 
-    for player in [
+    seat_order = [
         ordered_players[1],
         ordered_players[2],
         ordered_players[3],
         ordered_players[0],
-    ]:
+    ]
+    for player in seat_order:
         assert_discarding(player.color)
-        for _ in range(4):  # 9 cards => 4 discards
-            game.play_tick()
+        game.play_tick()  # one submission per player
+        if player is not seat_order[-1]:
+            assert all(
+                player_num_resource_cards(game.state, p.color) == 9 for p in players
+            )
+    for player in players:
         assert player_num_resource_cards(game.state, player.color) == 5
 
     # everyone discarded; game goes back to p1 moving robber

@@ -5,7 +5,7 @@ from collections import Counter
 
 from catanatron.game import Game
 from catanatron.models.player import Player
-from catanatron.players.tree_search_utils import prune_trade_offers
+from catanatron.players.tree_search_utils import prune_bot_actions
 
 DEFAULT_NUM_PLAYOUTS = 25
 USE_MULTIPROCESSING = True
@@ -29,8 +29,9 @@ class GreedyPlayoutsPlayer(Player):
     def decide(self, game: Game, playable_actions):
         if len(playable_actions) == 1:
             return playable_actions[0]
-        # Policy: don't initiate domestic trades (too many actions to playout).
-        playable_actions = prune_trade_offers(playable_actions) or playable_actions
+        # Policy: don't initiate domestic trades (too many actions to playout)
+        # and only try the keep-rule discard sets.
+        playable_actions = prune_bot_actions(playable_actions, game.state)
 
         start = time.time()
         # num_playouts = PLAYOUTS_BUDGET // len(playable_actions)
@@ -79,7 +80,8 @@ def run_playout(action_applied_game_copy):
 
 def decide_fn(self, game, playable_actions):
     # Policy: random playouts don't initiate domestic trades (each offer costs
-    # several extra plies, which makes playouts ~3x longer for little signal).
-    actions = prune_trade_offers(playable_actions) or playable_actions
+    # several extra plies, which makes playouts ~3x longer for little signal)
+    # and discard via the keep rule.
+    actions = prune_bot_actions(playable_actions, game.state)
     index = random.randrange(0, len(actions))
     return actions[index]

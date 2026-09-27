@@ -9,7 +9,7 @@ from catanatron.players.playouts import run_playout
 from catanatron.players.tree_search_utils import (
     execute_spectrum,
     list_prunned_actions,
-    prune_trade_offers,
+    prune_bot_actions,
 )
 
 SIMULATIONS = 10
@@ -44,10 +44,11 @@ class MCTSPlayer(Player):
 
 def mcts_actions(game: Game, prunning: bool):
     """Actions considered by the search. Policy (not a rule): never initiate
-    domestic trades, since OFFER_TRADE only widens the tree."""
+    domestic trades (OFFER_TRADE only widens the tree) and only branch over
+    the keep-rule discard sets."""
     if prunning:
         return list_prunned_actions(game)
-    return prune_trade_offers(game.playable_actions) or game.playable_actions
+    return prune_bot_actions(game.playable_actions, game.state)
 
 
 class StateNode:

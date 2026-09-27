@@ -3,6 +3,7 @@ from collections import defaultdict
 
 from catanatron.game import Game
 from catanatron.models.map import number_probability
+from catanatron.models.discard_rule import keep_rule_discard_sets
 from catanatron.models.enums import (
     DEVELOPMENT_CARDS,
     RESOURCES,
@@ -13,6 +14,7 @@ from catanatron.models.enums import (
     ActionType,
 )
 from catanatron.state_functions import (
+    player_key,
     get_player_buildings,
     get_dev_cards_in_hand,
     get_player_freqdeck,
@@ -31,7 +33,7 @@ DETERMINISTIC_ACTIONS = set(
         ActionType.PLAY_YEAR_OF_PLENTY,
         ActionType.PLAY_ROAD_BUILDING,
         ActionType.MARITIME_TRADE,
-        ActionType.DISCARD,  # player picks the card, so truly deterministic
+        ActionType.DISCARD,  # player picks the set, so truly deterministic
         ActionType.PLAY_MONOPOLY,  # for simplicity... we assume good card-counting and bank is visible...
         # Domestic trade actions only change prompts / move known cards around.
         ActionType.OFFER_TRADE,
@@ -138,10 +140,40 @@ def prune_trade_offers(actions):
     return [a for a in actions if a.action_type != ActionType.OFFER_TRADE]
 
 
+def prune_discard_actions(actions, state):
+    """Policy (not a rule): when the actions are DISCARD choices, keep only
+    the (at most 24) distinct sets produced by the keep rule
+    (catanatron.models.discard_rule) for the player's hand, in DISCARD_ORDERS
+    order. A 20-card hand has 1001 legal sets, which would swamp any search.
+    Non-DISCARD actions pass through unchanged."""
+    if not actions or actions[0].action_type != ActionType.DISCARD:
+        return actions
+    color = actions[0].color
+    owed = state.player_state[f"{player_key(state, color)}_DISCARD_OWED"]
+    hand = get_player_freqdeck(state, color)
+    keep_sets = keep_rule_discard_sets(hand, owed)
+    legal = set(a.value for a in actions if a.action_type == ActionType.DISCARD)
+    pruned = [
+        Action(color, ActionType.DISCARD, discard)
+        for discard in keep_sets
+        if discard in legal
+    ]
+    return pruned or actions
+
+
+def prune_bot_actions(playable_actions, state):
+    """The default policy pruning shared by the engine bots: no domestic
+    trade offers, and DISCARD restricted to the keep-rule sets. Never empty
+    when playable_actions is not empty (except when only offers were
+    listed, which cannot happen since END_TURN is always available)."""
+    actions = prune_trade_offers(playable_actions)
+    return prune_discard_actions(actions, state) or playable_actions
+
+
 def list_prunned_actions(game: Game):
     current_color = game.state.current_color()
     playable_actions = game.playable_actions
-    actions = prune_trade_offers(playable_actions)
+    actions = prune_bot_actions(playable_actions, game.state)
     types = set(map(lambda a: a.action_type, playable_actions))
 
     # Prune Initial Settlements at 1-tile places

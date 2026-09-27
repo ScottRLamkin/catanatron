@@ -167,6 +167,11 @@ class ValueFunctionPlayer(Player):
         if self.epsilon is not None and random.random() < self.epsilon:
             return random.choice(playable_actions)
 
+        # Policy: only evaluate the keep-rule discard sets (at most 24).
+        from catanatron.players.tree_search_utils import prune_discard_actions
+
+        playable_actions = prune_discard_actions(playable_actions, game.state)
+
         best_value = float("-inf")
         best_action = None
         for action in playable_actions:

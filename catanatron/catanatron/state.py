@@ -28,8 +28,13 @@ PLAYER_INITIAL_STATE = {
     "HAS_ARMY": False,
     "HAS_ROLLED": False,
     "HAS_PLAYED_DEVELOPMENT_CARD_IN_TURN": False,
-    # Number of resource cards this player still has to discard (7 rolled).
+    # Number of resource cards this player must discard (7 rolled). Public
+    # information; stays set until every owing player has submitted, then
+    # all discards are applied at once and this goes back to 0.
     "DISCARD_OWED": 0,
+    # True once this player has submitted their (hidden) discard set for the
+    # current 7; the DISCARD prompt skips them. Reset on resolution.
+    "DISCARD_SUBMITTED": False,
     # de-normalized features (for performance since we think they are good features)
     "ACTUAL_VICTORY_POINTS": 0,
     "LONGEST_ROAD_LENGTH": 0,
@@ -145,6 +150,11 @@ class State:
             self.current_prompt = ActionPrompt.BUILD_INITIAL_SETTLEMENT
             self.is_initial_build_phase = True
             self.is_discarding = False
+            # Hidden discard sets submitted so far for the current 7:
+            # Color -> (WOOD, BRICK, SHEEP, WHEAT, ORE) freqdeck. Applied
+            # (hand -> bank) all at once when the last owing player submits.
+            # Never serialized/exposed to other deciders before resolution.
+            self.pending_discards: Dict[Color, Tuple[int, int, int, int, int]] = {}
             self.is_moving_knight = False
             self.is_road_building = False
             self.free_roads_available = 0
@@ -197,6 +207,7 @@ class State:
         state_copy.current_prompt = self.current_prompt
         state_copy.is_initial_build_phase = self.is_initial_build_phase
         state_copy.is_discarding = self.is_discarding
+        state_copy.pending_discards = self.pending_discards.copy()  # values immutable
         state_copy.is_moving_knight = self.is_moving_knight
         state_copy.is_road_building = self.is_road_building
         state_copy.free_roads_available = self.free_roads_available

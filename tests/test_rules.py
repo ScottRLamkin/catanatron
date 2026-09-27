@@ -51,6 +51,11 @@ def set_hand(state, color, freqdeck):
 
 
 # ===== Discard
+def discard_values(game):
+    assert all(a.action_type == ActionType.DISCARD for a in game.playable_actions)
+    return [a.value for a in game.playable_actions]
+
+
 @patch("catanatron.apply_action.roll_dice")
 def test_discard_owed_counts(fake_roll_dice):
     fake_roll_dice.return_value = (3, 4)
@@ -68,6 +73,7 @@ def test_discard_owed_counts(fake_roll_dice):
     assert owed == [4, 0, 4]
     assert game.state.is_discarding
     assert game.state.current_color() == p0  # roller first
+    assert game.state.pending_discards == {}
 
 
 @patch("catanatron.apply_action.roll_dice")
@@ -77,18 +83,47 @@ def test_discard_limit_is_respected(fake_roll_dice):
     game = Game(players, discard_limit=9)
     advance_to_play_turn(game)
     p0, p1 = game.state.colors
-    set_hand(game.state, p1, [8, 0, 0, 0, 0])
-    set_hand(game.state, p0, [10, 0, 0, 0, 0])
+    set_hand(game.state, p1, [9, 0, 0, 0, 0])  # 9 => nothing (limit 9)
+    set_hand(game.state, p0, [10, 0, 0, 0, 0])  # 10 => owes 5
     game.play_tick()  # roll 7
 
     assert game.state.player_state["P1_DISCARD_OWED"] == 0
     assert game.state.player_state["P0_DISCARD_OWED"] == 5
     assert game.state.current_color() == p0
     assert game.state.current_prompt == ActionPrompt.DISCARD
+    assert discard_values(game) == [(5, 0, 0, 0, 0)]
+    game.play_tick()
+    assert get_player_freqdeck(game.state, p0) == [5, 0, 0, 0, 0]
+    assert get_player_freqdeck(game.state, p1) == [9, 0, 0, 0, 0]
+    assert game.state.current_prompt == ActionPrompt.MOVE_ROBBER
+
+
+def test_discard_possibilities_enumerate_all_sets():
+    """One action per multiset of size owed drawn from the hand."""
+    from catanatron.models.actions import discard_possibilities, iter_discard_freqdecks
+
+    players = [SimplePlayer(Color.RED), SimplePlayer(Color.BLUE)]
+    state = State(players)
+    p0 = state.colors[0]
+    set_hand(state, p0, [1, 1, 0, 3, 3])
+    state.player_state["P0_DISCARD_OWED"] = 4
+    actions = discard_possibilities(state, p0)
+    values = [a.value for a in actions]
+    assert all(a.action_type == ActionType.DISCARD and a.color == p0 for a in actions)
+    assert len(values) == len(set(values)) == 14
+    assert all(sum(v) == 4 and all(0 <= n <= h for n, h in zip(v, [1, 1, 0, 3, 3])) for v in values)
+    assert (0, 0, 0, 1, 3) in values and (1, 1, 0, 2, 0) in values
+    assert values == sorted(values)  # lexicographic, deterministic
+
+    # 20-card hand owing 10 has C(14,4) = 1001 sets when every resource is deep
+    assert len(list(iter_discard_freqdecks((10, 10, 10, 10, 10), 10))) == 1001
+    assert len(list(iter_discard_freqdecks((4, 4, 4, 4, 4), 10))) == 381
+    assert list(iter_discard_freqdecks((1, 0, 0, 0, 0), 2)) == []
+    assert list(iter_discard_freqdecks((1, 2, 0, 0, 0), 0)) == [(0, 0, 0, 0, 0)]
 
 
 @patch("catanatron.apply_action.roll_dice")
-def test_sequential_discard_flow(fake_roll_dice):
+def test_simultaneous_hidden_discard_flow(fake_roll_dice):
     fake_roll_dice.return_value = (3, 4)
     players = [SimplePlayer(Color.RED), SimplePlayer(Color.BLUE), SimplePlayer(Color.WHITE)]
     game = Game(players)
@@ -105,52 +140,138 @@ def test_sequential_discard_flow(fake_roll_dice):
     game.play_tick()  # p1 rolls 7
     bank_before = game.state.resource_freqdeck.copy()
 
-    # p2 first (seat after roller), one DISCARD action per resource type held
+    # p2 first (seat after roller, skipping p1 who owes nothing)
     assert game.state.current_color() == p2
-    assert sorted(a.value for a in game.playable_actions) == sorted([WOOD, BRICK, WHEAT, ORE])
-    assert all(a.action_type == ActionType.DISCARD for a in game.playable_actions)
+    assert game.state.current_prompt == ActionPrompt.DISCARD
+    values = discard_values(game)
+    assert len(values) == 14  # multisets of size 4 within (1,1,0,3,3)
+    assert all(a.color == p2 for a in game.playable_actions)
 
-    # can't discard something you don't hold
+    # validation: wrong size / not held / not a freqdeck
+    for bad in [(0, 0, 0, 1, 2), (0, 0, 0, 3, 3), (0, 0, 1, 1, 2), WOOD, (1, 1, 1, 1), (2, 0, 0, 1, 1), (-1, 0, 0, 2, 3)]:
+        with pytest.raises(ValueError):
+            game.execute(Action(p2, ActionType.DISCARD, bad))
+        with pytest.raises(ValueError):
+            game.execute(Action(p2, ActionType.DISCARD, bad), validate_action=False)
+    # a non-owing player can't discard
     with pytest.raises(ValueError):
-        game.execute(Action(p2, ActionType.DISCARD, SHEEP))
+        game.execute(Action(p1, ActionType.DISCARD, (0, 0, 0, 0, 0)), validate_action=False)
 
-    game.execute(Action(p2, ActionType.DISCARD, ORE))
-    assert game.state.player_state["P2_DISCARD_OWED"] == 3
-    assert player_num_resource_cards(game.state, p2, ORE) == 2
-    assert game.state.current_color() == p2  # still owes
-    game.execute(Action(p2, ActionType.DISCARD, ORE))
-    game.execute(Action(p2, ActionType.DISCARD, ORE))
-    assert ORE not in [a.value for a in game.playable_actions]  # ran out of ore
-    game.execute(Action(p2, ActionType.DISCARD, WHEAT))
-    assert player_num_resource_cards(game.state, p2) == 4
+    game.execute(Action(p2, ActionType.DISCARD, (0, 0, 0, 1, 3)))
+    # hidden & pending: nothing moved yet
+    assert game.state.pending_discards == {p2: (0, 0, 0, 1, 3)}
+    assert get_player_freqdeck(game.state, p2) == [1, 1, 0, 3, 3]
+    assert game.state.resource_freqdeck == bank_before
+    assert game.state.player_state["P2_DISCARD_OWED"] == 4  # public, unchanged
+    assert game.state.player_state["P2_DISCARD_SUBMITTED"]
+    # can't submit twice
+    with pytest.raises(ValueError):
+        game.execute(Action(p2, ActionType.DISCARD, (0, 0, 0, 1, 3)), validate_action=False)
 
-    # now p0 (wrap-around)
+    # now p0 (wrap-around): its view of p2's hand count is unchanged and the
+    # earlier choice is not in the JSON it might be shown
     assert game.state.current_color() == p0
     assert game.state.current_prompt == ActionPrompt.DISCARD
-    for _ in range(4):
-        game.play_tick()
-    assert player_num_resource_cards(game.state, p0) == 4
+    assert player_num_resource_cards(game.state, p2) == 8
+    import json as json_module
+    from catanatron.json import GameEncoder
+
+    serialized = json_module.loads(json_module.dumps(game, cls=GameEncoder))
+    assert "pending_discards" not in serialized
+    assert serialized["player_state"]["P2_WHEAT_IN_HAND"] == 3
+    assert serialized["player_state"]["P2_DISCARD_OWED"] == 4
+    # The submitted set lives only in pending_discards and the (deterministic)
+    # action record; a UI/JSON layer must redact DISCARD values in the log
+    # while state.is_discarding (follow-up work, see json.py).
+    assert game.state.action_records[-1].action == Action(p2, ActionType.DISCARD, (0, 0, 0, 1, 3))
+    assert game.state.action_records[-1].result is None
+
+    game.execute(Action(p0, ActionType.DISCARD, (2, 2, 0, 0, 0)))
+
+    # all applied at once, in seat order irrelevant
+    assert game.state.pending_discards == {}
+    assert get_player_freqdeck(game.state, p2) == [1, 1, 0, 2, 0]
+    assert get_player_freqdeck(game.state, p0) == [0, 0, 2, 2, 0]
+    assert game.state.resource_freqdeck == [
+        b + d for b, d in zip(bank_before, [2, 2, 0, 1, 3])
+    ]
+    assert all(game.state.player_state[f"P{i}_DISCARD_OWED"] == 0 for i in range(3))
+    assert not any(game.state.player_state[f"P{i}_DISCARD_SUBMITTED"] for i in range(3))
 
     # back to roller moving robber
     assert not game.state.is_discarding
+    assert game.state.is_moving_knight
     assert game.state.current_color() == p1
     assert game.state.current_prompt == ActionPrompt.MOVE_ROBBER
-    # discarded cards went to the bank
-    assert sum(game.state.resource_freqdeck) == sum(bank_before) + 8
-    # deterministic: records carry the resource, result is None
     discards = [ar for ar in game.state.action_records if ar.action.action_type == ActionType.DISCARD]
-    assert len(discards) == 8
-    assert all(ar.result is None and ar.action.value in RESOURCES for ar in discards)
+    assert len(discards) == 2
+    assert all(ar.result is None and len(ar.action.value) == 5 for ar in discards)
 
 
-def test_discard_owed_is_copied():
+@patch("catanatron.apply_action.roll_dice")
+def test_discard_prompt_order_from_roller_skips_non_owing(fake_roll_dice):
+    fake_roll_dice.return_value = (3, 4)
+    players = [SimplePlayer(c) for c in [Color.RED, Color.BLUE, Color.WHITE, Color.ORANGE]]
+    game = Game(players)
+    advance_to_play_turn(game)
+    game.state.current_player_index = 2
+    game.state.current_turn_index = 2
+    game.playable_actions = generate_playable_actions(game.state)
+    p0, p1, p2, p3 = game.state.colors
+    set_hand(game.state, p0, [8, 0, 0, 0, 0])
+    set_hand(game.state, p1, [0, 0, 0, 0, 0])
+    set_hand(game.state, p2, [0, 0, 0, 0, 0])  # roller, owes nothing
+    set_hand(game.state, p3, [0, 0, 0, 0, 9])
+    game.play_tick()  # p2 rolls 7
+
+    order = []
+    while game.state.is_discarding:
+        order.append(game.state.current_color())
+        game.play_tick()
+    assert order == [p3, p0]
+    assert game.state.current_color() == p2
+    assert game.state.current_prompt == ActionPrompt.MOVE_ROBBER
+    assert player_num_resource_cards(game.state, p0) == 4
+    assert player_num_resource_cards(game.state, p3) == 5
+
+
+def test_pending_discards_are_copied():
     players = [SimplePlayer(Color.RED), SimplePlayer(Color.BLUE)]
     state = State(players)
+    p0 = state.colors[0]
     state.player_state["P0_DISCARD_OWED"] = 3
+    state.pending_discards[p0] = (1, 1, 1, 0, 0)
     copy = state.copy()
     assert copy.player_state["P0_DISCARD_OWED"] == 3
+    assert copy.pending_discards == {p0: (1, 1, 1, 0, 0)}
     copy.player_state["P0_DISCARD_OWED"] = 0
+    copy.pending_discards.clear()
     assert state.player_state["P0_DISCARD_OWED"] == 3
+    assert state.pending_discards == {p0: (1, 1, 1, 0, 0)}
+
+
+def test_bots_prune_discards_to_keep_rule_sets():
+    from catanatron.models.discard_rule import keep_rule_discard_sets
+    from catanatron.players.tree_search_utils import prune_bot_actions, prune_discard_actions
+
+    players = [SimplePlayer(Color.RED), SimplePlayer(Color.BLUE)]
+    state = State(players)
+    p0 = state.colors[0]
+    set_hand(state, p0, [4, 4, 4, 4, 4])
+    state.player_state["P0_DISCARD_OWED"] = 10
+    state.current_prompt = ActionPrompt.DISCARD
+    state.is_discarding = True
+    actions = generate_playable_actions(state)
+    assert len(actions) == 381
+    pruned = prune_discard_actions(actions, state)
+    expected = keep_rule_discard_sets([4, 4, 4, 4, 4], 10)
+    assert [a.value for a in pruned] == expected
+    assert 1 <= len(pruned) <= 24
+    assert all(a in actions for a in pruned)
+    assert prune_bot_actions(actions, state) == pruned
+    # non-discard lists pass through
+    other = [Action(p0, ActionType.END_TURN, None)]
+    assert prune_discard_actions(other, state) == other
 
 
 # ===== Robber

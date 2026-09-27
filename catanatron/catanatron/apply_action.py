@@ -267,14 +267,18 @@ def apply_roll(state: State, action: Action, action_record=None):
 
     if number == 7:
         # Every player over the discard limit owes floor(hand / 2) cards.
+        # Choices are simultaneous and hidden: players are prompted one at a
+        # time in seat order from the roller, submissions are held in
+        # state.pending_discards and applied all at once when the last owing
+        # player submits (see apply_discard).
+        state.pending_discards = {}
         for color in state.colors:
+            key = player_key(state, color)
             num_cards = player_num_resource_cards(state, color)
             owed = num_cards // 2 if num_cards > state.discard_limit else 0
-            state.player_state[f"{player_key(state, color)}_DISCARD_OWED"] = owed
+            state.player_state[f"{key}_DISCARD_OWED"] = owed
+            state.player_state[f"{key}_DISCARD_SUBMITTED"] = False
 
-        # NOTE: in the official rules discards are simultaneous; here they are
-        # sequential (seat order, starting from the roller). This is the one
-        # deliberate deviation: the information leak is negligible.
         first_discarder = next_discarder_index(state, state.current_turn_index)
         if first_discarder is not None:
             state.current_player_index = first_discarder
@@ -301,45 +305,71 @@ def apply_roll(state: State, action: Action, action_record=None):
 
 def next_discarder_index(state: State, start_index):
     """Index of first player (in seat order, starting at start_index inclusive)
-    that still owes discards, or None."""
+    that owes discards and has not submitted their set yet, or None."""
     num_players = len(state.colors)
     for offset in range(num_players):
         index = (start_index + offset) % num_players
-        if state.player_state[f"P{index}_DISCARD_OWED"] > 0:
+        if (
+            state.player_state[f"P{index}_DISCARD_OWED"] > 0
+            and not state.player_state[f"P{index}_DISCARD_SUBMITTED"]
+        ):
             return index
     return None
 
 
+def validate_discard(state: State, color, value):
+    """Returns the discard set as a 5-tuple of ints, or raises ValueError if
+    `color` does not owe a discard right now, already submitted one, or
+    `value` is not a freqdeck within their hand summing to the owed amount."""
+    key = player_key(state, color)
+    owed = state.player_state[f"{key}_DISCARD_OWED"]
+    if owed <= 0:
+        raise ValueError(f"{color} does not owe any discards")
+    if state.player_state[f"{key}_DISCARD_SUBMITTED"]:
+        raise ValueError(f"{color} already submitted their discard")
+    try:
+        discard = tuple(int(n) for n in value)
+    except (TypeError, ValueError):
+        raise ValueError(f"DISCARD value must be a 5-tuple freqdeck, got {value!r}")
+    if len(discard) != 5 or any(n < 0 for n in discard):
+        raise ValueError(f"DISCARD value must be a 5-tuple freqdeck, got {value!r}")
+    if sum(discard) != owed:
+        raise ValueError(f"{color} owes {owed} cards, got {sum(discard)}: {value!r}")
+    if not player_resource_freqdeck_contains(state, color, discard):
+        raise ValueError(f"{color} does not hold the cards to discard {value!r}")
+    return discard
+
+
 def apply_discard(state: State, action: Action, action_record=None):
-    """Discards a single resource card (action.value) chosen by the player.
-    Deterministic, so action_record is ignored (kept for signature symmetry)."""
-    resource = action.value
+    """Records the player's chosen discard set (action.value, a 5-freqdeck
+    summing to what they owe). Hidden until every owing player has
+    submitted; then all sets are moved hand -> bank at once and the roller
+    moves the robber. Deterministic, so action_record is ignored."""
+    discard = validate_discard(state, action.color, action.value)
     key = player_key(state, action.color)
-    if state.player_state[f"{key}_DISCARD_OWED"] <= 0:
-        raise ValueError(f"{action.color} does not owe any discards")
-    if resource not in RESOURCES:
-        raise ValueError(f"DISCARD value must be a single resource, got {resource}")
-    if state.player_state[f"{key}_{resource}_IN_HAND"] < 1:
-        raise ValueError(f"{action.color} does not hold {resource} to discard")
-
-    player_deck_draw(state, action.color, resource)
-    freqdeck_replenish(state.resource_freqdeck, 1, resource)
-    state.player_state[f"{key}_DISCARD_OWED"] -= 1
-
-    if state.player_state[f"{key}_DISCARD_OWED"] > 0:
-        # same player keeps discarding; prompt stays DISCARD
-        return ActionRecord(action=action, result=None)
+    state.pending_discards[action.color] = discard
+    state.player_state[f"{key}_DISCARD_SUBMITTED"] = True
+    action = Action(action.color, action.action_type, discard)
 
     next_index = next_discarder_index(state, state.current_player_index + 1)
     if next_index is not None:
         state.current_player_index = next_index
         # state.current_prompt stays the same
-    else:
-        state.current_player_index = state.current_turn_index
-        state.current_prompt = ActionPrompt.MOVE_ROBBER
-        state.is_discarding = False
-        state.is_moving_knight = True
+        return ActionRecord(action=action, result=None)
 
+    # Everyone submitted: resolve simultaneously.
+    for color, freqdeck in state.pending_discards.items():
+        player_freqdeck_subtract(state, color, freqdeck)
+        state.resource_freqdeck = freqdeck_add(state.resource_freqdeck, freqdeck)
+        color_key = player_key(state, color)
+        state.player_state[f"{color_key}_DISCARD_OWED"] = 0
+        state.player_state[f"{color_key}_DISCARD_SUBMITTED"] = False
+    state.pending_discards = {}
+
+    state.current_player_index = state.current_turn_index
+    state.current_prompt = ActionPrompt.MOVE_ROBBER
+    state.is_discarding = False
+    state.is_moving_knight = True
     return ActionRecord(action=action, result=None)
 
 

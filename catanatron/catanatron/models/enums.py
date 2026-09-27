@@ -74,9 +74,11 @@ class ActionType(Enum):
 
     ROLL = "ROLL"  # value is None
     MOVE_ROBBER = "MOVE_ROBBER"  # value is (coordinate, Color|None).
-    # DISCARD value is a single Resource. Discarding is done one card at a time:
-    #   a player owing N cards (N = floor(hand/2) when hand > discard_limit on a 7)
-    #   is prompted N consecutive times.
+    # DISCARD value is a 5-tuple freqdeck (WOOD, BRICK, SHEEP, WHEAT, ORE): the
+    #   complete set of cards to discard. It sums to P{i}_DISCARD_OWED
+    #   (floor(hand/2) when hand > discard_limit on a 7) and is within the hand.
+    #   Owing players are prompted once each, in seat order from the roller;
+    #   choices are hidden (state.pending_discards) and applied all at once.
     DISCARD = "DISCARD"
 
     # Building/Buying
@@ -133,7 +135,7 @@ undoing actions to a State.
 
 The "result" field is polymorphic depending on the action_type.
 - ROLL: result is (int, int) 2 dice rolled
-- DISCARD: result is None (player chooses the single Resource in action.value)
+- DISCARD: result is None (player chooses the full freqdeck in action.value)
 - MOVE_ROBBER: result is card stolen (Resource|None)
 - BUY_DEVELOPMENT_CARD: result is card
 - ...for the rest, result is None since they are deterministic actions

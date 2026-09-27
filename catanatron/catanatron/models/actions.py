@@ -246,14 +246,38 @@ def initial_road_possibilities(state, color) -> List[Action]:
 
 
 def discard_possibilities(state, color) -> List[Action]:
-    """One DISCARD action per resource type the player holds. The player
-    discards one card at a time until P{i}_DISCARD_OWED reaches 0."""
+    """One DISCARD action per legal discard set: every 5-freqdeck within the
+    player's hand that sums to P{i}_DISCARD_OWED (all multisets of that size
+    drawn from the hand, up to C(owed+4, 4) = 1001 for a 20-card hand)."""
+    owed = state.player_state[f"{player_key(state, color)}_DISCARD_OWED"]
     freqdeck = get_player_freqdeck(state, color)
     return [
-        Action(color, ActionType.DISCARD, resource)
-        for resource, amount in zip(RESOURCES, freqdeck)
-        if amount > 0
+        Action(color, ActionType.DISCARD, discard)
+        for discard in iter_discard_freqdecks(freqdeck, owed)
     ]
+
+
+def iter_discard_freqdecks(hand_freqdeck, owed):
+    """Yields every (WOOD, BRICK, SHEEP, WHEAT, ORE) tuple with
+    0 <= t[i] <= hand_freqdeck[i] and sum(t) == owed, in lexicographic order.
+    Yields nothing if owed > sum(hand) or owed < 0."""
+    hand = tuple(hand_freqdeck)
+    suffix_totals = [0] * 6  # suffix_totals[i] = sum(hand[i:])
+    for i in range(4, -1, -1):
+        suffix_totals[i] = suffix_totals[i + 1] + hand[i]
+
+    def rec(i, remaining, prefix):
+        if i == 4:
+            if remaining <= hand[4]:
+                yield prefix + (remaining,)
+            return
+        low = max(0, remaining - suffix_totals[i + 1])
+        high = min(hand[i], remaining)
+        for n in range(low, high + 1):
+            yield from rec(i + 1, remaining - n, prefix + (n,))
+
+    if 0 <= owed <= suffix_totals[0]:
+        yield from rec(0, owed, ())
 
 
 # (give, get) amounts for the bounded set of domestic trade offers generated in

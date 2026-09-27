@@ -7,7 +7,7 @@ from catanatron.models.player import Player
 from catanatron.players.tree_search_utils import (
     expand_spectrum,
     list_prunned_actions,
-    prune_trade_offers,
+    prune_bot_actions,
 )
 from catanatron.players.value import (
     DEFAULT_WEIGHTS,
@@ -55,9 +55,10 @@ class AlphaBetaPlayer(Player):
         if self.prunning:
             return list_prunned_actions(game)
         # Policy: never initiate domestic trades (a depth-limited search can't
-        # value them since the cards move only after a later CONFIRM_TRADE).
-        # It still responds to (accepts/rejects) trades offered by others.
-        return prune_trade_offers(game.playable_actions)
+        # value them since the cards move only after a later CONFIRM_TRADE)
+        # and only consider the keep-rule discard sets (up to 24 instead of
+        # up to 1001). It still responds to trades offered by others.
+        return prune_bot_actions(game.playable_actions, game.state)
 
     def decide(self, game: Game, playable_actions):
         actions = self.get_actions(game)

@@ -5,6 +5,7 @@ conservation, discard amounts)."""
 import random
 
 from catanatron.game import TURNS_LIMIT, Game, GameAccumulator
+from catanatron.models.actions import iter_discard_freqdecks
 from catanatron.models.enums import RESOURCES, ActionType
 from catanatron.models.player import Color, RandomPlayer
 from catanatron.players.weighted_random import WeightedRandomPlayer
@@ -28,6 +29,15 @@ def check_invariants(state):
         assert total == TOTAL_PER_RESOURCE, f"conservation broken: {total}"
     for i in range(len(state.colors)):
         assert state.player_state[f"P{i}_DISCARD_OWED"] >= 0
+    # pending sets are always within the (still untouched) hands
+    for color, discard in state.pending_discards.items():
+        hand = get_player_freqdeck(state, color)
+        assert all(0 <= n <= h for n, h in zip(discard, hand))
+        assert sum(discard) == state.player_state[
+            f"P{state.color_to_index[color]}_DISCARD_OWED"
+        ]
+    if not state.is_discarding:
+        assert state.pending_discards == {}
 
 
 class InvariantAccumulator(GameAccumulator):
@@ -36,6 +46,7 @@ class InvariantAccumulator(GameAccumulator):
         self.expected_discards = []  # per 7 rolled that triggered discards
         self.actual_discards = []
         self.num_steps = 0
+        self.max_discard_actions = 0
 
     def step(self, game, action):
         state = game.state
@@ -55,9 +66,24 @@ class InvariantAccumulator(GameAccumulator):
             self.actual_discards.append(0)
         if action.action_type == ActionType.DISCARD:
             assert state.is_discarding
-            assert action.value in RESOURCES
-            assert player_num_resource_cards(state, action.color, action.value) > 0
-            self.actual_discards[-1] += 1
+            index = state.color_to_index[action.color]
+            owed = state.player_state[f"P{index}_DISCARD_OWED"]
+            hand_size = self.prev_hands[index]
+            # each discard is a full set of exactly floor(n/2) cards, within hand
+            assert hand_size > state.discard_limit
+            assert owed == hand_size // 2
+            assert len(action.value) == 5 and sum(action.value) == owed
+            hand = get_player_freqdeck(state, action.color)
+            assert all(0 <= n <= h for n, h in zip(action.value, hand))
+            assert not state.player_state[f"P{index}_DISCARD_SUBMITTED"]
+            assert action.color not in state.pending_discards
+            # every legal set is listed exactly once
+            num_sets = len(list(iter_discard_freqdecks(hand, owed)))
+            assert len(game.playable_actions) == num_sets
+            assert len(set(a.value for a in game.playable_actions)) == num_sets
+            assert action in game.playable_actions
+            self.max_discard_actions = max(self.max_discard_actions, num_sets)
+            self.actual_discards[-1] += owed
 
         self.prev_hands = [
             player_num_resource_cards(state, color) for color in state.colors
@@ -69,6 +95,7 @@ def test_many_games_preserve_rules():
     colors = [Color.RED, Color.BLUE, Color.WHITE, Color.ORANGE]
     winners = 0
     total_sevens = 0
+    max_discard_actions = 0
     for i in range(NUM_GAMES):
         num_players = rng.choice([2, 3, 4])
         players = [
@@ -93,6 +120,7 @@ def test_many_games_preserve_rules():
         # discards total floor(n/2) for every player over the limit
         assert acc.expected_discards == acc.actual_discards
         total_sevens += len(acc.expected_discards)
+        max_discard_actions = max(max_discard_actions, acc.max_discard_actions)
         # no discard owed left over
         assert all(
             state.player_state[f"P{j}_DISCARD_OWED"] == 0 for j in range(num_players)
@@ -100,3 +128,4 @@ def test_many_games_preserve_rules():
 
     assert winners >= NUM_GAMES * 0.95
     assert total_sevens > 0
+    assert max_discard_actions > 5  # some player chose among many sets

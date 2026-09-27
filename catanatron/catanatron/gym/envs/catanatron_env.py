@@ -7,9 +7,11 @@ import numpy as np
 from catanatron.game import Game, TURNS_LIMIT
 from catanatron.models.player import Color, Player, RandomPlayer
 from catanatron.models.map import BASE_MAP_TEMPLATE, NUM_NODES, LandTile, build_map
-from catanatron.models.enums import RESOURCES, Action, ActionType
+from catanatron.models.enums import RESOURCES, Action, ActionPrompt, ActionType
 from catanatron.models.board import get_edges
 from catanatron.models.actions import DOMESTIC_TRADE_TEMPLATES
+from catanatron.models.discard_rule import DISCARD_ORDERS, keep_rule
+from catanatron.state_functions import get_player_freqdeck, player_key
 from catanatron.features import (
     create_sample,
     get_feature_ordering,
@@ -80,7 +82,10 @@ ACTIONS_ARRAY = [
         for tile in TILE_COORDINATES
         for relative_seat in RELATIVE_SEATS
     ],
-    *[(ActionType.DISCARD, resource) for resource in RESOURCES],
+    # DISCARD slot i = discard the keep-rule set for DISCARD_ORDERS[i] (see
+    # catanatron.models.discard_rule); the engine action value is the
+    # resulting 5-freqdeck. Mapping in either direction needs the State.
+    *[(ActionType.DISCARD, i) for i in range(len(DISCARD_ORDERS))],
     *[(ActionType.BUILD_ROAD, tuple(sorted(edge))) for edge in get_edges()],
     *[(ActionType.BUILD_SETTLEMENT, node_id) for node_id in range(NUM_NODES)],
     *[(ActionType.BUILD_CITY, node_id) for node_id in range(NUM_NODES)],
@@ -135,8 +140,31 @@ def to_action_type_space(action_type: ActionType) -> int:
     return ACTION_TYPES.index(action_type)
 
 
+def _discard_keep_sets(state, color):
+    """[(order_index, discard freqdeck)] for `color`'s current hand/owed."""
+    owed = state.player_state[f"{player_key(state, color)}_DISCARD_OWED"]
+    hand = get_player_freqdeck(state, color)
+    return [(i, keep_rule(hand, owed, order)) for i, order in enumerate(DISCARD_ORDERS)]
+
+
+def discard_to_order_index(state, action):
+    """Action-space value for a DISCARD action: the lowest DISCARD_ORDERS
+    index whose keep-rule set equals action.value. A set no order produces
+    (e.g. a RandomPlayer's) maps to the closest keep-rule set (L1 distance,
+    ties to the lowest index) so that logging never fails; this is lossy."""
+    target = tuple(action.value)
+    best_index, best_distance = 0, None
+    for i, discard in _discard_keep_sets(state, action.color):
+        distance = sum(abs(a - b) for a, b in zip(discard, target))
+        if distance == 0:
+            return i
+        if best_distance is None or distance < best_distance:
+            best_index, best_distance = i, distance
+    return best_index
+
+
 # NOTE: I think I don't need this if we separate action and action_record nicely...
-def normalize_action(action, colors, p0_color=None):
+def normalize_action(action, colors, p0_color=None, state=None):
     """Maps an Action to the color-agnostic (relative-seat) representation
     used by ACTIONS_ARRAY.
 
@@ -149,6 +177,9 @@ def normalize_action(action, colors, p0_color=None):
             computed. Defaults to the acting player's own color, which is
             enough for callers (like logging/accumulators) that only need a
             canonical, unambiguous encoding of the action itself.
+        state: the State the action is taken in. Required for DISCARD
+            (its freqdeck value is encoded as a keep-rule order index, which
+            depends on the player's hand).
     """
     p0_color = p0_color if p0_color is not None else action.color
     action_type = action.action_type
@@ -162,6 +193,10 @@ def normalize_action(action, colors, p0_color=None):
         return Action(action.color, action_type, tuple(sorted(action.value)))
     elif action_type == ActionType.BUY_DEVELOPMENT_CARD:
         return Action(action.color, action_type, None)
+    elif action_type == ActionType.DISCARD:
+        if state is None:
+            raise ValueError("normalize_action needs `state` for DISCARD actions")
+        return Action(action.color, action_type, discard_to_order_index(state, action))
     elif action_type in (ActionType.ACCEPT_TRADE, ActionType.REJECT_TRADE):
         # value-less in the action space; resolved via state.current_trade.
         return Action(action.color, action_type, None)
@@ -172,23 +207,32 @@ def normalize_action(action, colors, p0_color=None):
     return action
 
 
-def to_action_space(action, colors, p0_color=None):
+def to_action_space(action, colors, p0_color=None, state=None):
     """maps action to space_action equivalent integer"""
-    normalized = normalize_action(action, colors, p0_color)
+    normalized = normalize_action(action, colors, p0_color, state)
     return ACTIONS_ARRAY_INDEX[(normalized.action_type, normalized.value)]
 
 
-def from_action_space(action_int, playable_actions, colors, p0_color=None):
+def from_action_space(action_int, playable_actions, colors, p0_color=None, state=None):
     """maps action_int to catantron.models.actions.Action"""
     # Get "catan_action" based on space action.
     # i.e. Take first action in playable that matches ACTIONS_ARRAY blueprint
     (action_type, value) = ACTIONS_ARRAY[action_int]
     catan_action = None
-    for action in playable_actions:
-        normalized = normalize_action(action, colors, p0_color)
-        if normalized.action_type == action_type and normalized.value == value:
-            catan_action = action
-            break  # return the first one
+    if action_type == ActionType.DISCARD:
+        # Decode the order index into the exact keep-rule set, then require
+        # that set to be listed (it always is when the player is discarding).
+        assert state is not None, "from_action_space needs `state` for DISCARD"
+        color = playable_actions[0].color
+        wanted = dict(_discard_keep_sets(state, color))[value]
+        candidate = Action(color, ActionType.DISCARD, wanted)
+        catan_action = candidate if candidate in playable_actions else None
+    else:
+        for action in playable_actions:
+            normalized = normalize_action(action, colors, p0_color, state)
+            if normalized.action_type == action_type and normalized.value == value:
+                catan_action = action
+                break  # return the first one
     assert catan_action is not None
     return catan_action
 
@@ -276,18 +320,31 @@ class CatanatronEnv(gym.Env):
             List[int]: valid (deduplicated) action-space integers.
         """
         colors = self.game.state.colors
+        state = self.game.state
+        playable_actions = self.game.playable_actions
+        if self.game.winning_color() is not None:
+            # Game over: nothing to decide (the listed actions may belong to
+            # the opponent whose move ended the game, and would not encode
+            # from P0's perspective).
+            return []
+        if state.current_prompt == ActionPrompt.DISCARD:
+            # Every keep-rule set is legal, so all 24 slots are valid; skip
+            # normalizing the (up to 1001) listed sets one by one.
+            return sorted(
+                {
+                    ACTIONS_ARRAY_INDEX[(ActionType.DISCARD, i)]
+                    for i in range(len(DISCARD_ORDERS))
+                }
+            )
         return sorted(
-            {
-                to_action_space(a, colors, self.p0.color)
-                for a in self.game.playable_actions
-            }
+            {to_action_space(a, colors, self.p0.color, state) for a in playable_actions}
         )
 
     def step(self, action):
         colors = self.game.state.colors
         try:
             catan_action = from_action_space(
-                action, self.game.playable_actions, colors, self.p0.color
+                action, self.game.playable_actions, colors, self.p0.color, self.game.state
             )
         except Exception as e:
             self.invalid_actions_count += 1
@@ -396,8 +453,9 @@ Attributes:
         order), rather than by Color, so the action space is agnostic to
         which Color P0 happens to be. DISCARD, OFFER_TRADE, ACCEPT_TRADE,
         REJECT_TRADE and CANCEL_TRADE are also part of the action space now:
-        - DISCARD picks a single resource to discard (one owed card at a
-          time; the prompt repeats until the player owes 0).
+        - DISCARD picks one of the 24 keep-rule priority orders
+          (catanatron.models.discard_rule.DISCARD_ORDERS); the engine
+          action discards the full set that order keeps away.
         - OFFER_TRADE is one of a fixed enumeration of 60 template offers
           (every ordered pair of distinct resources x each of the 3
           give/get templates).

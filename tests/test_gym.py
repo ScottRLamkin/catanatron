@@ -259,9 +259,11 @@ def test_discard_via_env_chooses_resource():
         if discard_actions:
             found_discard = True
             action = discard_actions[0]
-            resource = ACTIONS_ARRAY[action][1]
+            order_index = ACTIONS_ARRAY[action][1]
+            assert order_index in range(24)
+            before = env.invalid_actions_count
             obs, reward, terminated, truncated, info = env.step(action)
-            assert resource in ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"]
+            assert env.invalid_actions_count == before  # decoded to a legal set
             break
         action = random.choice(info["valid_actions"])
         obs, reward, terminated, truncated, info = env.step(action)
