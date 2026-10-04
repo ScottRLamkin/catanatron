@@ -120,19 +120,23 @@ def monopoly_possibilities(color) -> List[Action]:
 
 
 def year_of_plenty_possibilities(color, freqdeck: List[int]) -> List[Action]:
-    options: Set[Union[Tuple[FastResource, FastResource], Tuple[FastResource]]] = set()
+    # An insertion-ordered dict (not a set): iteration order must not depend on
+    # the per-process string hash seed (PYTHONHASHSEED).
+    options: Dict[
+        Union[Tuple[FastResource, FastResource], Tuple[FastResource]], None
+    ] = {}
     for i, first_card in enumerate(RESOURCES):
         for j in range(i, len(RESOURCES)):
             second_card = RESOURCES[j]  # doing it this way to not repeat
 
             to_draw = freqdeck_from_listdeck([first_card, second_card])
             if freqdeck_contains(freqdeck, to_draw):
-                options.add((first_card, second_card))
+                options[(first_card, second_card)] = None
             else:  # try allowing player select 1 card only.
                 if freqdeck_can_draw(freqdeck, 1, first_card):
-                    options.add((first_card,))
+                    options[(first_card,)] = None
                 if freqdeck_can_draw(freqdeck, 1, second_card):
-                    options.add((second_card,))
+                    options[(second_card,)] = None
 
     return list(
         map(
@@ -339,7 +343,9 @@ def maritime_trade_possibilities(state, color) -> List[Action]:
 
 def inner_maritime_trade_possibilities(hand_freqdeck, bank_freqdeck, port_resources):
     """This inner function is to make this logic more shareable"""
-    trade_offers = set()
+    # Insertion-ordered dict, not a set: the offers hold resource strings, whose
+    # hash (and so set order) differs per process unless PYTHONHASHSEED is fixed.
+    trade_offers: Dict[Any, None] = {}
 
     # Get lowest rate per resource
     rates: Dict[FastResource, int] = {WOOD: 4, BRICK: 4, SHEEP: 4, WHEAT: 4, ORE: 4}
@@ -361,6 +367,6 @@ def inner_maritime_trade_possibilities(hand_freqdeck, bank_freqdeck, port_resour
                     and freqdeck_count(bank_freqdeck, j_resource) > 0
                 ):
                     trade_offer = tuple(resource_out + [j_resource])
-                    trade_offers.add(trade_offer)
+                    trade_offers[trade_offer] = None
 
     return trade_offers

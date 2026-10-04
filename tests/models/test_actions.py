@@ -228,3 +228,33 @@ def test_can_trade_with_port():
 
     possibilities = maritime_trade_possibilities(state, Color.RED)
     assert len(possibilities) == 4
+
+
+def test_option_order_independent_of_hash_seed():
+    """Maritime / year-of-plenty option order must not depend on PYTHONHASHSEED
+    (they used to be built in sets of tuples of resource strings)."""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "from catanatron.models.actions import ("
+        "inner_maritime_trade_possibilities, year_of_plenty_possibilities)\n"
+        "from catanatron.models.player import Color\n"
+        "print(list(inner_maritime_trade_possibilities([5,5,5,5,5],[19]*5,{None,'WOOD','ORE'})))\n"
+        "print(year_of_plenty_possibilities(Color.RED, [19,19,0,19,1]))\n"
+    )
+    outs = []
+    for hs in ("1", "2", "99"):
+        env = {**os.environ, "PYTHONHASHSEED": hs}
+        outs.append(
+            subprocess.run(
+                [sys.executable, "-c", code],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            ).stdout
+        )
+    assert outs[0] == outs[1] == outs[2]
